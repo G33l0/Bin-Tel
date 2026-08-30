@@ -466,3 +466,121 @@ class DatabaseInfo(BaseModel):
     @property
     def version_display(self) -> str:
         return display(self.version)
+
+# ---------------------------------------------------------------------------
+# Advanced search
+# ---------------------------------------------------------------------------
+
+
+class MatchMode(StrEnum):
+    """How a text criterion is matched."""
+
+    EXACT = "exact"
+    PREFIX = "prefix"
+    CONTAINS = "contains"
+    FUZZY = "fuzzy"
+
+    @property
+    def label(self) -> str:
+        return {
+            MatchMode.EXACT: "Exact match",
+            MatchMode.PREFIX: "Starts with",
+            MatchMode.CONTAINS: "Contains",
+            MatchMode.FUZZY: "Similar to",
+        }[self]
+
+
+class AdvancedQuery(BaseModel):
+    """A multi-criteria search across BIN, issuer and geography.
+
+    Every field is optional; an empty query matches everything, which is what
+    makes this usable as a browse surface as well as a search.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    bin_prefix: str | None = None
+    bin_from: str | None = None
+    bin_to: str | None = None
+    institution: str | None = None
+    institution_match: MatchMode = MatchMode.CONTAINS
+    country_code: str | None = None
+    region: str | None = None
+    city: str | None = None
+    postal_code: str | None = None
+    network_code: str | None = None
+    brand: str | None = None
+    card_type: str | None = None
+    funding_type: str | None = None
+    currency: str | None = None
+    status: str | None = None
+    prepaid: bool | None = None
+    commercial: bool | None = None
+    updated_after: datetime | None = None
+    updated_before: datetime | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        return not any(
+            value not in (None, "")
+            for key, value in self.model_dump().items()
+            if key != "institution_match"
+        )
+
+    @property
+    def active_criteria(self) -> list[tuple[str, str]]:
+        """Label/value pairs describing what was searched for."""
+        labels = {
+            "bin_prefix": "BIN starts with",
+            "bin_from": "BIN from",
+            "bin_to": "BIN to",
+            "institution": "Institution",
+            "country_code": "Country",
+            "region": "State / province",
+            "city": "City",
+            "postal_code": "Postal code",
+            "network_code": "Network",
+            "brand": "Card brand",
+            "card_type": "Card type",
+            "funding_type": "Funding type",
+            "currency": "Currency",
+            "status": "Status",
+            "prepaid": "Prepaid",
+            "commercial": "Commercial",
+            "updated_after": "Updated after",
+            "updated_before": "Updated before",
+        }
+        rows: list[tuple[str, str]] = []
+        for key, label in labels.items():
+            value = getattr(self, key, None)
+            if value in (None, ""):
+                continue
+            if isinstance(value, bool):
+                rows.append((label, "Yes" if value else "No"))
+            elif isinstance(value, datetime):
+                rows.append((label, value.strftime("%d %b %Y")))
+            else:
+                rows.append((label, str(value)))
+        if self.institution:
+            rows.append(("Name matching", self.institution_match.label))
+        return rows
+
+    def describe(self) -> str:
+        criteria = self.active_criteria
+        if not criteria:
+            return "All records"
+        return " · ".join(f"{label}: {value}" for label, value in criteria)
+
+
+class AdvancedSearchResult(BaseModel):
+    """A page of advanced-search results plus its criteria."""
+
+    model_config = ConfigDict(frozen=True)
+
+    query: AdvancedQuery
+    page: Page[BinRow]
+    elapsed_ms: float = 0.0
+
+    @property
+    def found(self) -> bool:
+        return self.page.total > 0

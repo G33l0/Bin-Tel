@@ -18,7 +18,11 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.core.constants import DEFAULT_MANIFEST_URL
+from app.core.constants import (
+    DEFAULT_LICENSE_API_URL,
+    DEFAULT_MANIFEST_URL,
+    DEFAULT_TELEMETRY_URL,
+)
 from app.core.paths import AppPaths, get_paths
 
 
@@ -88,6 +92,53 @@ class SearchBehavior(StrEnum):
         return "Search as you type" if self is SearchBehavior.AS_YOU_TYPE else "Search on Enter"
 
 
+class UpdateCheckMode(StrEnum):
+    """When Bin-Tel looks for a newer database."""
+
+    STARTUP = "startup"
+    PERIODIC = "periodic"
+    MANUAL = "manual"
+
+    @property
+    def label(self) -> str:
+        return {
+            UpdateCheckMode.STARTUP: "On startup and on schedule",
+            UpdateCheckMode.PERIODIC: "On schedule only",
+            UpdateCheckMode.MANUAL: "Only when I ask",
+        }[self]
+
+
+class InstallPolicy(StrEnum):
+    """What happens once a newer database has been found."""
+
+    ASK = "ask"
+    DOWNLOAD_ONLY = "download_only"
+    AUTOMATIC = "automatic"
+
+    @property
+    def label(self) -> str:
+        return {
+            InstallPolicy.ASK: "Ask before installing",
+            InstallPolicy.DOWNLOAD_ONLY: "Download, then ask",
+            InstallPolicy.AUTOMATIC: "Download and install automatically",
+        }[self]
+
+
+class LicenseServiceMode(StrEnum):
+    """Which licensing service the client talks to."""
+
+    HOSTED = "hosted"
+    DEVELOPMENT = "development"
+
+    @property
+    def label(self) -> str:
+        return (
+            "Bin-Tel licensing service"
+            if self is LicenseServiceMode.HOSTED
+            else "Local development service"
+        )
+
+
 class LogLevel(StrEnum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -118,6 +169,12 @@ class DatabaseSettings(_Section):
     install_automatically: bool = False
     backup_before_update: bool = True
     max_backups: int = Field(default=3, ge=1, le=20)
+    backups_enabled: bool = True
+    backup_directory: str = ""
+    check_mode: UpdateCheckMode = UpdateCheckMode.PERIODIC
+    install_policy: InstallPolicy = InstallPolicy.ASK
+    allow_delta_updates: bool = True
+    verify_after_update: bool = True
 
     @field_validator("manifest_url")
     @classmethod
@@ -146,6 +203,65 @@ class SearchSettings(_Section):
     max_history: int = Field(default=25, ge=0, le=200)
 
 
+class WatchlistSettings(_Section):
+    """How watchlists behave after a database update."""
+
+    scan_after_update: bool = True
+    desktop_notifications: bool = True
+    in_app_notifications: bool = True
+    keep_events_days: int = Field(default=180, ge=7, le=1825)
+    auto_acknowledge: bool = False
+
+
+class ReportSettings(_Section):
+    output_directory: str = ""
+    default_format: str = "pdf"
+    include_summary: bool = True
+    open_after_export: bool = False
+    max_report_rows: int = Field(default=10_000, ge=100, le=1_000_000)
+
+
+class LicenseSettings(_Section):
+    service_mode: LicenseServiceMode = LicenseServiceMode.HOSTED
+    api_url: str = DEFAULT_LICENSE_API_URL
+    #: Base64 public key licences are verified against. Empty means "use the
+    #: key compiled into this build".
+    verifying_key: str = ""
+    revalidate_on_startup: bool = True
+
+    @field_validator("api_url")
+    @classmethod
+    def _validate_api_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return DEFAULT_LICENSE_API_URL
+        if not value.startswith(("https://", "http://")):
+            raise ValueError("The licensing API URL must start with https:// or http://")
+        return value
+
+
+class PrivacySettings(_Section):
+    """Telemetry is off until the user turns it on."""
+
+    telemetry_enabled: bool = False
+    telemetry_url: str = DEFAULT_TELEMETRY_URL
+    #: Whether the user has been shown the telemetry explanation at least once.
+    telemetry_prompted: bool = False
+    crash_reports: bool = False
+    remember_search_history: bool = True
+    share_database_diagnostics: bool = False
+
+    @field_validator("telemetry_url")
+    @classmethod
+    def _validate_telemetry_url(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return DEFAULT_TELEMETRY_URL
+        if not value.startswith(("https://", "http://")):
+            raise ValueError("The telemetry URL must start with https:// or http://")
+        return value
+
+
 class AdvancedSettings(_Section):
     log_level: LogLevel = LogLevel.INFO
     log_retention_days: int = Field(default=14, ge=1, le=365)
@@ -163,6 +279,10 @@ class Settings(BaseModel):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     appearance: AppearanceSettings = Field(default_factory=AppearanceSettings)
     search: SearchSettings = Field(default_factory=SearchSettings)
+    watchlists: WatchlistSettings = Field(default_factory=WatchlistSettings)
+    reports: ReportSettings = Field(default_factory=ReportSettings)
+    license: LicenseSettings = Field(default_factory=LicenseSettings)
+    privacy: PrivacySettings = Field(default_factory=PrivacySettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
 
     def to_json(self) -> str:
@@ -186,6 +306,10 @@ class Settings(BaseModel):
             "database": DatabaseSettings,
             "appearance": AppearanceSettings,
             "search": SearchSettings,
+            "watchlists": WatchlistSettings,
+            "reports": ReportSettings,
+            "license": LicenseSettings,
+            "privacy": PrivacySettings,
             "advanced": AdvancedSettings,
         }
         for name, section_cls in section_types.items():
@@ -225,6 +349,11 @@ class AppState(BaseModel):
     last_known_remote_version: str = ""
     search_history: list[str] = Field(default_factory=list)
     active_page: str = "dashboard"
+    last_license_check: datetime | None = None
+    last_change_scan: datetime | None = None
+    last_telemetry_flush: datetime | None = None
+    dismissed_notices: list[str] = Field(default_factory=list)
+    onboarding_completed: bool = False
 
     def record_search(self, term: str, limit: int) -> None:
         term = term.strip()
@@ -331,6 +460,29 @@ class ConfigManager:
             directory.mkdir(parents=True, exist_ok=True)
             return directory / self._paths.database_file.name
         return self._paths.database_file
+
+    def backups_path(self) -> Path:
+        """Where backups are written, honouring a user-chosen folder."""
+        configured = self.settings.database.backup_directory.strip()
+        if configured:
+            directory = Path(configured).expanduser()
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory
+        return self._paths.backups_dir
+
+    def reports_path(self) -> Path:
+        configured = self.settings.reports.output_directory.strip()
+        if configured:
+            directory = Path(configured).expanduser()
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory
+        return self._paths.exports_dir
+
+    def should_check_on_startup(self) -> bool:
+        database = self.settings.database
+        if not database.automatic_updates:
+            return False
+        return database.check_mode is UpdateCheckMode.STARTUP
 
     def mark_update_checked(self, remote_version: str | None = None) -> None:
         self.state.last_update_check = datetime.now(UTC)
