@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Bin-Tel">
+  <title>Bin-Tel (small sizes)</title>
+  <desc>Simplified mark for 16-32px rendering: the orbital arcs are dropped and
+  the data rows are thickened so the silhouette stays legible.</desc>
+  <defs>
+    <linearGradient id="btShellS" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#22C8B4"/>
+      <stop offset="55%" stop-color="#1E8FB0"/>
+      <stop offset="100%" stop-color="#2B4C9B"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 1.5 59.5 16.8v30.4L32 62.5 4.5 47.2V16.8Z" fill="url(#btShellS)"/>
+  <path d="M32 8.6 53.4 20.5v23L32 55.4 10.6 43.5v-23Z" fill="#0B1220"/>
+  <g fill="#F2F6FB">
+    <rect x="17" y="20" width="21" height="5.6" rx="2.8"/>
+    <rect x="17" y="29.2" width="28" height="5.6" rx="2.8"/>
+    <rect x="17" y="38.4" width="13" height="5.6" rx="2.8" opacity="0.7"/>
+  </g>
+  <circle cx="40" cy="41.2" r="5.2" fill="#22C8B4"/>
+</svg>
