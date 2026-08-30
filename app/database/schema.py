@@ -35,6 +35,10 @@ OPTIONAL_TABLES: tuple[str, ...] = (
     "update_history",
     "conflicts",
     "normalization_events",
+    "bin_history",
+    "institution_history",
+    "database_versions",
+    "database_statistics",
 )
 
 #: Extra covering indexes that are not expressible as simple column indexes on
@@ -65,6 +69,25 @@ EXTRA_INDEXES: tuple[tuple[str, str], ...] = (
         "ix_addresses_geo",
         "CREATE INDEX IF NOT EXISTS ix_addresses_geo "
         "ON addresses (country_id, region_code, normalized_city)",
+    ),
+    (
+        "ix_bins_analytics",
+        "CREATE INDEX IF NOT EXISTS ix_bins_analytics "
+        "ON bins (card_type, funding_type, country_id, network_id)",
+    ),
+    (
+        "ix_bins_recent",
+        "CREATE INDEX IF NOT EXISTS ix_bins_recent ON bins (last_updated, first_seen)",
+    ),
+    (
+        "ix_bin_history_lookup",
+        "CREATE INDEX IF NOT EXISTS ix_bin_history_lookup "
+        "ON bin_history (bin, changed_at, action)",
+    ),
+    (
+        "ix_institution_history_lookup",
+        "CREATE INDEX IF NOT EXISTS ix_institution_history_lookup "
+        "ON institution_history (institution_uid, changed_at, action)",
     ),
 )
 

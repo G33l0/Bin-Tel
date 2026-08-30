@@ -20,7 +20,13 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 
-from app.core.constants import APP_NAME, APP_VERSION, SCHEMA_VERSION
+from app.core.constants import (
+    APP_NAME,
+    APP_VERSION,
+    MAX_SCHEMA_VERSION,
+    MIN_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+)
 from app.core.errors import (
     BinTelError,
     ChecksumMismatchError,
@@ -31,11 +37,14 @@ from app.core.errors import (
 )
 from app.core.logging_config import get_logger
 from app.database.backup import install_database
-from app.database.engine import DatabaseManager
+from app.database.engine import DatabaseManager, create_database_engine
 from app.database.integrity import VerificationReport, verify_database
+from app.database.migrations import ensure_optional_tables, migrate
 from app.database.schema import analyze, rebuild_indexes, stamp_schema_version
 from app.models.entities import DatabaseMetadata, UpdateStatus
 from app.providers.base import BaseProvider, DownloadProgress
+from app.providers.compression import decompress, normalise, suffix_for
+from app.providers.delta import plan_update
 from app.providers.manager import ProviderManager
 from app.providers.manifest import DatabaseManifest
 from app.services.backup_service import BackupService
@@ -54,6 +63,8 @@ class UpdateState(StrEnum):
     AVAILABLE = "available"
     DOWNLOADING = "downloading"
     VERIFYING = "verifying"
+    EXTRACTING = "extracting"
+    MIGRATING = "migrating"
     BACKING_UP = "backing_up"
     INSTALLING = "installing"
     INDEXING = "indexing"
@@ -70,6 +81,8 @@ class UpdateState(StrEnum):
             UpdateState.AVAILABLE: "Update available",
             UpdateState.DOWNLOADING: "Downloading…",
             UpdateState.VERIFYING: "Verifying…",
+            UpdateState.EXTRACTING: "Extracting…",
+            UpdateState.MIGRATING: "Migrating the database…",
             UpdateState.BACKING_UP: "Backing up…",
             UpdateState.INSTALLING: "Installing…",
             UpdateState.INDEXING: "Building indexes…",
@@ -112,6 +125,7 @@ class UpdateCheck:
     update_available: bool = False
     checked_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     provider: str = ""
+    compatible: bool = True
     message: str = ""
 
     @property
@@ -129,6 +143,9 @@ class UpdateOutcome:
     bytes_downloaded: int = 0
     backup_path: Path | None = None
     report: VerificationReport | None = None
+    migrated: bool = False
+    migration_summary: str = ""
+    used_delta: bool = False
     message: str = ""
 
 
@@ -149,6 +166,7 @@ class DatabaseUpdateService:
         downloads_dir: Path,
         backup_before_update: bool = True,
         journal: UpdateJournal | None = None,
+        on_installed: Callable[[UpdateOutcome], None] | None = None,
     ) -> None:
         self._manager = manager
         self._providers = providers
@@ -161,6 +179,9 @@ class DatabaseUpdateService:
         self._journal = journal or UpdateJournal(
             database_path.parent.parent / "update-history.json"
         )
+        # Called after a successful activation, on the worker thread. Used to
+        # run change detection without this service depending on watchlists.
+        self._on_installed = on_installed
 
     # -- configuration ----------------------------------------------------
     def set_paths(self, database_path: Path, downloads_dir: Path) -> None:
@@ -169,6 +190,10 @@ class DatabaseUpdateService:
 
     def set_backup_before_update(self, value: bool) -> None:
         self._backup_before_update = value
+
+    def set_installed_hook(self, hook: Callable[[UpdateOutcome], None] | None) -> None:
+        """Register a post-activation callback (change detection, analytics)."""
+        self._on_installed = hook
 
     @property
     def database_path(self) -> Path:
@@ -186,15 +211,21 @@ class DatabaseUpdateService:
     def check(self, current_version: str | None) -> UpdateCheck:
         """Fetch the manifest and compare it with the installed version."""
         manifest, provider = self._providers.fetch_manifest()
-        if not manifest.supported_by(APP_VERSION, SCHEMA_VERSION):
+        compatibility = manifest.compatibility(
+            APP_VERSION, MAX_SCHEMA_VERSION, MIN_SCHEMA_VERSION
+        )
+        if not compatibility.installable:
             return UpdateCheck(
                 manifest=manifest,
                 current_version=current_version,
                 update_available=False,
                 provider=provider.name,
-                message=(
-                    f"A newer database is published, but it needs a newer version of "
-                    f"{APP_NAME}. Update the application to install it."
+                compatible=False,
+                message=compatibility.reason
+                + (
+                    f" Update {APP_NAME} to install it."
+                    if compatibility.needs_app_update
+                    else ""
                 ),
             )
         available = manifest.is_newer_than(current_version)
@@ -229,8 +260,22 @@ class DatabaseUpdateService:
         is_cancelled = cancelled or (lambda: False)
         self._downloads_dir.mkdir(parents=True, exist_ok=True)
         staging = self._downloads_dir / f"bintel-{manifest.version}.sqlite"
+        transfer = (
+            staging.with_name(staging.name + suffix_for(manifest.compression))
+            if manifest.is_compressed
+            else staging
+        )
         backup_path: Path | None = None
         reopened = False
+
+        # Deltas are advertised in the manifest and evaluated here; this build
+        # has no applier registered, so the decision is logged and the full
+        # package is fetched.
+        plan = plan_update(manifest, previous_version)
+        if not plan.use_delta and plan.descriptor is not None:
+            logger.info(
+                "Delta update not used", extra={"context": {"reason": plan.reason}}
+            )
 
         try:
             # --- download -------------------------------------------------
@@ -238,7 +283,7 @@ class DatabaseUpdateService:
                 UpdateProgress(
                     UpdateState.DOWNLOADING,
                     f"Downloading database {manifest.version}…",
-                    total=manifest.database_size,
+                    total=manifest.transfer_size,
                 )
             )
             last_emit = 0.0
@@ -264,17 +309,41 @@ class DatabaseUpdateService:
 
             downloaded = self._providers.download(
                 manifest,
-                staging,
+                transfer,
                 provider=provider,
                 progress=on_chunk,
                 cancelled=is_cancelled,
             )
             downloaded_bytes = downloaded.stat().st_size
 
-            # --- verify ---------------------------------------------------
+            # --- integrity of the transferred artefact --------------------
             emit(UpdateProgress(UpdateState.VERIFYING, "Verifying download integrity…"))
             self._verify_checksum(downloaded, manifest, emit, is_cancelled)
 
+            # --- expand ---------------------------------------------------
+            if manifest.is_compressed:
+                emit(
+                    UpdateProgress(
+                        UpdateState.EXTRACTING,
+                        f"Extracting the {normalise(manifest.compression)} package…",
+                    )
+                )
+                downloaded = decompress(
+                    downloaded,
+                    staging,
+                    manifest.compression,
+                    progress=lambda done, total: emit(
+                        UpdateProgress(
+                            UpdateState.EXTRACTING,
+                            "Extracting the database package…",
+                            received=done,
+                            total=total,
+                        )
+                    ),
+                    cancelled=is_cancelled,
+                )
+
+            # --- verify the database itself -------------------------------
             emit(UpdateProgress(UpdateState.VERIFYING, "Verifying database structure…"))
             report = verify_database(downloaded, quick=False)
             if not report.ok:
@@ -283,11 +352,9 @@ class DatabaseUpdateService:
                     "installed. Your existing database is unchanged.",
                     detail="; ".join(report.errors),
                 )
-            if report.schema_version is not None and report.schema_version > SCHEMA_VERSION:
-                raise SchemaVersionError(
-                    "The downloaded database needs a newer version of Bin-Tel.",
-                    detail=f"schema {report.schema_version} > supported {SCHEMA_VERSION}",
-                )
+
+            # --- migrate the staged copy, never the live one --------------
+            migration = self._migrate_staged(downloaded, report, emit)
 
             # --- backup ---------------------------------------------------
             if self._backup_before_update and self.database_installed:
@@ -315,6 +382,7 @@ class DatabaseUpdateService:
             stamp_schema_version(self._manager.engine, manifest.schema_version)
             analyze(self._manager.engine)
             self._stamp_metadata(manifest, report)
+            self._record_version_row(manifest, report)
             self._record_history(
                 previous_version,
                 manifest.version,
@@ -342,18 +410,25 @@ class DatabaseUpdateService:
                 },
             )
             staging.unlink(missing_ok=True)
-            return UpdateOutcome(
+            transfer.unlink(missing_ok=True)
+            outcome = UpdateOutcome(
                 success=True,
                 version=manifest.version,
                 previous_version=previous_version,
                 bytes_downloaded=downloaded_bytes,
                 backup_path=backup_path,
                 report=report,
+                migrated=migration.migrated,
+                migration_summary=migration.summary,
+                used_delta=plan.use_delta,
                 message=f"Database {manifest.version} installed.",
             )
+            self._notify_installed(outcome)
+            return outcome
 
         except OperationCancelled:
             emit(UpdateProgress(UpdateState.CANCELLED, "Update cancelled."))
+            staging.unlink(missing_ok=True)
             self._rollback(backup_path, reopened)
             self._journal.record_failure(
                 manifest.version,
@@ -438,6 +513,87 @@ class DatabaseUpdateService:
                 detail=f"expected {manifest.checksum_digest[:16]}…, got {actual[:16]}…",
             )
 
+    def _migrate_staged(
+        self,
+        path: Path,
+        report: VerificationReport,
+        emit: ProgressCallback,
+    ):
+        """Migrate the downloaded copy up to this build's schema.
+
+        Run before activation, against a private engine, so a failed migration
+        leaves the working database completely untouched.
+        """
+        from app.database.migrations import MigrationResult
+
+        if report.schema_version is None:
+            raise SchemaVersionError(
+                "The downloaded database does not declare a schema version.",
+                detail="database_metadata has no schema_version row",
+            )
+        if report.schema_version > MAX_SCHEMA_VERSION:
+            raise SchemaVersionError(
+                "The downloaded database needs a newer version of Bin-Tel.",
+                detail=f"schema {report.schema_version} > supported {MAX_SCHEMA_VERSION}",
+            )
+
+        engine = create_database_engine(path, create_if_missing=False)
+        try:
+            ensure_optional_tables(engine)
+            if report.schema_version == MAX_SCHEMA_VERSION:
+                return MigrationResult(
+                    from_version=report.schema_version, to_version=report.schema_version
+                )
+            emit(
+                UpdateProgress(
+                    UpdateState.MIGRATING,
+                    f"Migrating the database from schema {report.schema_version}…",
+                )
+            )
+            return migrate(engine, target=MAX_SCHEMA_VERSION, minimum=MIN_SCHEMA_VERSION)
+        finally:
+            engine.dispose()
+
+    def _record_version_row(
+        self, manifest: DatabaseManifest, report: VerificationReport
+    ) -> None:
+        """Record this release in the activated database's own lineage table."""
+        from sqlalchemy import select
+
+        from app.models.entities import DatabaseVersion
+
+        try:
+            with self._manager.transaction() as session:
+                existing = session.execute(
+                    select(DatabaseVersion).where(DatabaseVersion.version == manifest.version)
+                ).scalar_one_or_none()
+                if existing is not None:
+                    return
+                session.add(
+                    DatabaseVersion(
+                        version=manifest.version,
+                        schema_version=manifest.schema_version,
+                        edition=manifest.edition,
+                        release_date=manifest.release_date,
+                        record_count=manifest.record_count or report.bin_count,
+                        institution_count=manifest.institution_count
+                        or report.institution_count,
+                        checksum=manifest.checksum,
+                        notes=manifest.notes,
+                    )
+                )
+        except Exception:  # noqa: BLE001 - lineage must never fail an update
+            logger.debug("Could not record the database version row", exc_info=True)
+
+    def _notify_installed(self, outcome: UpdateOutcome) -> None:
+        """Run the post-activation hook without letting it fail the update."""
+        if self._on_installed is None:
+            return
+        try:
+            self._on_installed(outcome)
+        except Exception:  # noqa: BLE001 - a hook must never break an update
+            logger.exception("The post-install hook raised")
+
     def _stamp_metadata(self, manifest: DatabaseManifest, report: VerificationReport) -> None:
         from app.database.schema import write_metadata
 
@@ -456,6 +612,7 @@ class DatabaseUpdateService:
                     DatabaseMetadata.INSTALLED_AT: datetime.now(UTC).isoformat(),
                     DatabaseMetadata.LAST_VERIFIED: datetime.now(UTC).isoformat(),
                     DatabaseMetadata.NOTES: manifest.notes,
+                    DatabaseMetadata.BUILD_ID: manifest.edition,
                 },
             )
 

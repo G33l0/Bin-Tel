@@ -581,3 +581,121 @@ class NormalizationEvent(Base):
         Index("ix_normalization_entity", "entity_type", "entity_key"),
         Index("ix_normalization_rule", "rule"),
     )
+
+# ---------------------------------------------------------------------------
+# Change history
+# ---------------------------------------------------------------------------
+
+
+class ChangeAction(StrEnum):
+    """What happened to a record between two database releases."""
+
+    CREATED = "created"
+    UPDATED = "updated"
+    RETIRED = "retired"
+    REASSIGNED = "reassigned"
+    MERGED = "merged"
+
+    @property
+    def label(self) -> str:
+        return self.value.capitalize()
+
+
+class BinHistory(Base):
+    """A superseded state of a BIN record.
+
+    Database releases append here rather than overwriting, so "BIN History"
+    can show how an assignment changed over time. The current state always
+    lives in :class:`Bin`; this table holds what came before it.
+    """
+
+    __tablename__ = "bin_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bin: Mapped[str] = mapped_column(String(11), nullable=False)
+    bin_id: Mapped[int | None] = mapped_column(ForeignKey("bins.id", ondelete="SET NULL"))
+    action: Mapped[str] = mapped_column(String(24), default=ChangeAction.UPDATED.value)
+    field: Mapped[str | None] = mapped_column(String(64))
+    previous_value: Mapped[str | None] = mapped_column(Text)
+    current_value: Mapped[str | None] = mapped_column(Text)
+    institution_uid: Mapped[str | None] = mapped_column(String(40))
+    database_version: Mapped[str | None] = mapped_column(String(32))
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        Index("ix_bin_history_bin", "bin", "changed_at"),
+        Index("ix_bin_history_version", "database_version"),
+    )
+
+
+class InstitutionHistory(Base):
+    """A superseded state of an institution record."""
+
+    __tablename__ = "institution_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    institution_uid: Mapped[str] = mapped_column(String(40), nullable=False)
+    institution_id: Mapped[int | None] = mapped_column(
+        ForeignKey("institutions.id", ondelete="SET NULL")
+    )
+    action: Mapped[str] = mapped_column(String(24), default=ChangeAction.UPDATED.value)
+    field: Mapped[str | None] = mapped_column(String(64))
+    previous_value: Mapped[str | None] = mapped_column(Text)
+    current_value: Mapped[str | None] = mapped_column(Text)
+    database_version: Mapped[str | None] = mapped_column(String(32))
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        Index("ix_institution_history_uid", "institution_uid", "changed_at"),
+        Index("ix_institution_history_version", "database_version"),
+    )
+
+
+class DatabaseVersion(Base):
+    """One published release of the intelligence database.
+
+    The build pipeline appends a row per release, so a package carries its own
+    lineage and the application can show what changed between two versions.
+    """
+
+    __tablename__ = "database_versions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    edition: Mapped[str] = mapped_column(String(24), default="community")
+    release_date: Mapped[datetime | None] = mapped_column(DateTime)
+    record_count: Mapped[int] = mapped_column(Integer, default=0)
+    institution_count: Mapped[int] = mapped_column(Integer, default=0)
+    checksum: Mapped[str | None] = mapped_column(String(160))
+    bins_added: Mapped[int] = mapped_column(Integer, default=0)
+    bins_removed: Mapped[int] = mapped_column(Integer, default=0)
+    bins_changed: Mapped[int] = mapped_column(Integer, default=0)
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (Index("ix_database_versions_release", "release_date"),)
+
+
+class DatabaseStatistic(Base):
+    """A precomputed aggregate, so analytics does not rescan on every visit.
+
+    The build pipeline fills this in; the application recomputes any entry it
+    finds missing so an older package still produces correct analytics.
+    """
+
+    __tablename__ = "database_statistics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str | None] = mapped_column(String(160))
+    value: Mapped[int] = mapped_column(Integer, default=0)
+    ratio: Mapped[float | None] = mapped_column(Float)
+    database_version: Mapped[str | None] = mapped_column(String(32))
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("scope", "key", name="uq_statistic_scope_key"),
+        Index("ix_database_statistics_scope", "scope", "value"),
+    )

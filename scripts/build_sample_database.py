@@ -27,8 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.constants import SCHEMA_VERSION  # noqa: E402
 from app.database.engine import DatabaseManager  # noqa: E402
 from app.database.schema import analyze, create_schema, write_metadata  # noqa: E402
-from app.models.entities import DatabaseMetadata  # noqa: E402
+from app.models.entities import DatabaseMetadata, DatabaseVersion  # noqa: E402
 from app.services.ingest_service import IngestService, RawBinRecord  # noqa: E402
+from app.providers.compression import compress, normalise, suffix_for  # noqa: E402
 from app.utils.hashing import file_checksum  # noqa: E402
 
 # --- synthetic issuer catalogue -------------------------------------------
@@ -101,7 +102,13 @@ CARD_TYPES = ["credit", "credit", "credit", "debit", "debit", "debit", "prepaid"
 STATUSES = ["active"] * 18 + ["inactive", "retired"]
 
 
-def build(output_dir: Path, bin_count: int, version: str, seed: int) -> tuple[Path, Path]:
+def build(
+    output_dir: Path,
+    bin_count: int,
+    version: str,
+    seed: int,
+    compression: str = "none",
+) -> tuple[Path, Path]:
     rng = random.Random(seed)
     output_dir.mkdir(parents=True, exist_ok=True)
     package = output_dir / f"bintel-{version}.sqlite"
@@ -190,6 +197,17 @@ def build(output_dir: Path, bin_count: int, version: str, seed: int) -> tuple[Pa
                 )
             )
 
+        session.add(
+            DatabaseVersion(
+                version=version,
+                schema_version=SCHEMA_VERSION,
+                edition="community",
+                release_date=datetime.now(UTC),
+                record_count=written,
+                institution_count=len(ISSUERS),
+                notes="Synthetic reference package for development and testing.",
+            )
+        )
         write_metadata(
             session,
             {
@@ -209,23 +227,38 @@ def build(output_dir: Path, bin_count: int, version: str, seed: int) -> tuple[Pa
     for suffix in ("-wal", "-shm"):
         package.with_name(package.name + suffix).unlink(missing_ok=True)
 
-    digest = file_checksum(package, "sha256")
+    database_size = package.stat().st_size
+
+    # The published checksum covers the artefact that is actually transferred.
+    compression = normalise(compression)
+    if compression == "none":
+        artefact = package
+    else:
+        artefact = package.with_name(package.name + suffix_for(compression))
+        compress(package, artefact, compression)
+
+    digest = file_checksum(artefact, "sha256")
     manifest_path = output_dir / "database-manifest.json"
     manifest = {
         "version": version,
         "schema_version": SCHEMA_VERSION,
+        "min_schema_version": 1,
         "release_date": datetime.now(UTC).isoformat(),
-        "database_size": package.stat().st_size,
+        "database_size": database_size,
+        "compressed_size": artefact.stat().st_size if compression != "none" else 0,
         "record_count": written,
-        "checksum": f"sha256:{digest}",
-        "download_url": package.name,
-        "compression": "none",
+        "institution_count": len(ISSUERS),
+        "sha256": digest,
+        "download_url": artefact.name,
+        "compression": compression,
+        "edition": "community",
         "publisher": "Bin-Tel Project",
         "notes": "Synthetic reference package for development and testing.",
         "minimum_app_version": "1.0.0",
+        "deltas": [],
     }
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    return package, manifest_path
+    return artefact, manifest_path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -238,10 +271,18 @@ def main(argv: list[str] | None = None) -> int:
         help="package version (default: today's date)",
     )
     parser.add_argument("--seed", type=int, default=20260814)
+    parser.add_argument(
+        "--compression",
+        default="none",
+        choices=["none", "gzip", "xz", "bz2"],
+        help="compress the published package",
+    )
     args = parser.parse_args(argv)
 
     print(f"Building a {args.bins:,}-BIN sample package…")
-    package, manifest = build(args.output, args.bins, args.version, args.seed)
+    package, manifest = build(
+        args.output, args.bins, args.version, args.seed, args.compression
+    )
     size_mb = package.stat().st_size / (1024 * 1024)
     print(f"\nPackage:  {package}  ({size_mb:.1f} MB)")
     print(f"Manifest: {manifest}")
