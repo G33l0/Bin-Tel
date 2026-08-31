@@ -33,10 +33,41 @@ class NormalizedBin:
     iin_length: int
     range_low: int
     range_high: int
+    #: The prefix exactly as given, and how long it is. These are the identity;
+    #: ``prefix6``/``prefix8`` are derived conveniences for indexing and must
+    #: never be used to decide which institution a card belongs to.
+    prefix: str = ""
+    prefix_length: int = 0
+    prefix_type: str = "root"
 
     @property
     def is_canonical_iin(self) -> bool:
         return self.iin_length in CANONICAL_IIN_LENGTHS
+
+    @property
+    def span(self) -> tuple[int, int]:
+        """The inclusive numeric span this prefix covers at padding width."""
+        return self.range_low, self.range_high
+
+    @property
+    def span_size(self) -> int:
+        return self.range_high - self.range_low + 1
+
+
+def classify_prefix(digits: str) -> str:
+    """Which kind of allocation a prefix of this length represents.
+
+    Six digits is a root IIN; eight is an extended assignment that may sit
+    under a root shared with other issuers. Anything else is treated as a root
+    for storage purposes but keeps its real length, because inventing a length
+    is how a lookup ends up naming the wrong bank.
+    """
+    from app.models.entities import PrefixType
+
+    length = len(digits)
+    if length >= 8:
+        return PrefixType.EXTENDED.value
+    return PrefixType.ROOT.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +115,9 @@ class BinNormalizer:
             iin_length=iin_length,
             range_low=int(padded_low),
             range_high=int(padded_high),
+            prefix=digits,
+            prefix_length=len(digits),
+            prefix_type=classify_prefix(digits),
         )
 
     @staticmethod

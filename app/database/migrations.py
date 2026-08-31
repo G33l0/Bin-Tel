@@ -175,15 +175,124 @@ def migrate(
 # ---------------------------------------------------------------------------
 #
 # Schema 1 is the initial published schema, so there is nothing to migrate to
-# it. Future steps register here, for example::
-#
-#     @register(2, "add bin_history and institution_history", reindex=True)
-#     def _to_v2(engine: Engine) -> None:
-#         BinHistory.__table__.create(engine, checkfirst=True)
-#         InstitutionHistory.__table__.create(engine, checkfirst=True)
-#
-# The runner applies them in order against the *staged* download, so a failure
-# never touches the database currently in use.
+# it. The runner applies steps in order against the *staged* download, so a
+# failure never touches the database currently in use.
+
+
+def _columns(engine: Engine, table: str) -> set[str]:
+    from sqlalchemy import inspect
+
+    inspector = inspect(engine)
+    if table not in inspector.get_table_names():
+        return set()
+    return {column["name"] for column in inspector.get_columns(table)}
+
+
+def _add_column(engine: Engine, table: str, column: str, definition: str) -> bool:
+    """Add a column if the staged package does not already carry it."""
+    if column in _columns(engine, table):
+        return False
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    return True
+
+
+@register(2, "range-aware prefix identity and temporal relationships", reindex=True)
+def _to_v2(engine: Engine) -> None:
+    """Give BINs a real prefix identity and relationships a lifetime.
+
+    A schema-1 package stores ``bins.bin`` without recording how long the
+    assignment actually is, so a six-digit root and an eight-digit assignment
+    beneath it are indistinguishable once loaded. This step adds the identity
+    columns and backfills them from the stored digits, which is lossless: the
+    length of the prefix as published *is* its assigned length.
+
+    Relationship rows gain a lifetime and are backfilled as current, because a
+    schema-1 package only ever described the present.
+    """
+    from app.models.entities import (
+        DataQualityMetric,
+        InstitutionRelationship,
+        PrefixType,
+        RangeType,
+        RecordStatus,
+        StagingRecord,
+    )
+
+    # -- new tables --------------------------------------------------------
+    for model in (InstitutionRelationship, StagingRecord, DataQualityMetric):
+        model.__table__.create(engine, checkfirst=True)
+
+    # -- bins: prefix identity --------------------------------------------
+    _add_column(engine, "bins", "prefix", "VARCHAR(11) NOT NULL DEFAULT ''")
+    _add_column(engine, "bins", "prefix_length", "INTEGER NOT NULL DEFAULT 6")
+    _add_column(
+        engine, "bins", "prefix_type", f"VARCHAR(16) DEFAULT '{PrefixType.ROOT.value}'"
+    )
+    _add_column(engine, "bins", "span_low", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(engine, "bins", "span_high", "INTEGER NOT NULL DEFAULT 0")
+
+    with engine.begin() as connection:
+        # The published digits are the assignment, so length and type follow
+        # from them directly rather than being guessed at.
+        connection.exec_driver_sql(
+            "UPDATE bins SET prefix = bin, prefix_length = length(bin) "
+            "WHERE prefix IS NULL OR prefix = ''"
+        )
+        connection.exec_driver_sql(
+            "UPDATE bins SET prefix_type = CASE "
+            f"WHEN length(bin) >= 8 THEN '{PrefixType.EXTENDED.value}' "
+            f"ELSE '{PrefixType.ROOT.value}' END"
+        )
+        # The span a prefix covers, at the eight-digit padding width.
+        connection.exec_driver_sql(
+            "UPDATE bins SET "
+            "span_low  = CAST(substr(bin || '00000000', 1, 8) AS INTEGER), "
+            "span_high = CAST(substr(bin || '99999999', 1, 8) AS INTEGER)"
+        )
+
+    # -- bin_institutions: temporal + evidence -----------------------------
+    _add_column(
+        engine,
+        "bin_institutions",
+        "status",
+        f"VARCHAR(16) DEFAULT '{RecordStatus.ACTIVE.value}'",
+    )
+    _add_column(engine, "bin_institutions", "effective_from", "DATETIME")
+    _add_column(engine, "bin_institutions", "effective_to", "DATETIME")
+    _add_column(engine, "bin_institutions", "is_current", "BOOLEAN DEFAULT 1")
+    _add_column(engine, "bin_institutions", "confidence_level", "VARCHAR(16)")
+    _add_column(engine, "bin_institutions", "confidence_reasons", "TEXT")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE bin_institutions SET is_current = 1 WHERE is_current IS NULL"
+        )
+        connection.exec_driver_sql(
+            "UPDATE bin_institutions SET effective_from = first_seen "
+            "WHERE effective_from IS NULL"
+        )
+
+    # -- bin_ranges: type, span and lifetime -------------------------------
+    _add_column(
+        engine,
+        "bin_ranges",
+        "range_type",
+        f"VARCHAR(24) DEFAULT '{RangeType.ISSUER_RANGE.value}'",
+    )
+    _add_column(engine, "bin_ranges", "span", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(engine, "bin_ranges", "effective_from", "DATETIME")
+    _add_column(engine, "bin_ranges", "effective_to", "DATETIME")
+    _add_column(engine, "bin_ranges", "is_current", "BOOLEAN DEFAULT 1")
+    with engine.begin() as connection:
+        connection.exec_driver_sql(
+            "UPDATE bin_ranges SET span = range_high_int - range_low_int WHERE span = 0"
+        )
+        connection.exec_driver_sql(
+            "UPDATE bin_ranges SET is_current = 1 WHERE is_current IS NULL"
+        )
+        connection.exec_driver_sql(
+            "UPDATE bin_ranges SET effective_from = first_seen WHERE effective_from IS NULL"
+        )
 
 
 def ensure_optional_tables(engine: Engine) -> list[str]:

@@ -23,6 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.logging_config import get_logger
+from app.lookup.evidence import score_relationship
+from app.lookup.strategy import LookupStrategy
 from app.models.entities import (
     Address,
     AliasType,
@@ -39,6 +41,7 @@ from app.models.entities import (
     InstitutionAlias,
     Network,
     NormalizationEvent,
+    RangeType,
     RecordStatus,
     RelationshipType,
     Source,
@@ -102,6 +105,16 @@ class RawBinRecord(BaseModel):
     status: str | None = None
     aliases: list[str] = []
     confidence: float = 0.8
+    #: What kind of allocation a range row describes. An account range is the
+    #: most specific authoritative allocation there is, and ranking depends on
+    #: knowing which kind arrived.
+    range_type: str | None = None
+    #: When the relationship this record asserts began and ended. A record with
+    #: an end date describes a former issuer, not a current one.
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
+    #: How this record relates the institution to the BIN. Defaults to issuer.
+    relationship: str | None = None
 
 
 @dataclass(slots=True)
@@ -260,12 +273,21 @@ class IngestService:
             self._add_aliases(cached, [*aliases, *self._legal_aliases(cached, legal_name)])
             return cached
 
-        candidates = (
+        candidates = list(
             self._session.execute(
                 select(Institution).where(Institution.normalized_name == normalized.normalized)
             )
             .scalars()
             .all()
+        )
+        # Aliases are curated identity, so they belong in the candidate set: a
+        # record that arrives as "MTB" carrying "Meridian Trust Bank" as an
+        # alias is describing an institution that is probably already here, and
+        # creating a second record for it would split its BIN portfolio in two.
+        candidates.extend(
+            item
+            for item in self._alias_candidates(display, aliases)
+            if all(item.id != existing.id for existing in candidates)
         )
         match = self._pick_institution(candidates, country, website, swift_bic, display)
         if match is not None:
@@ -330,6 +352,41 @@ class IngestService:
             return []
         return [name]
 
+    def _alias_candidates(
+        self, display: str, aliases: Iterable[str]
+    ) -> list[Institution]:
+        """Institutions reachable through a recorded alias, either direction.
+
+        Either the incoming name is already an alias of an existing record, or
+        one of the incoming aliases *is* an existing record's name.
+        """
+        keys = {name_normalizer.normalized_form(display)}
+        keys.update(name_normalizer.normalized_form(alias) for alias in aliases)
+        keys.discard("")
+        if not keys:
+            return []
+        by_alias = (
+            self._session.execute(
+                select(Institution)
+                .join(InstitutionAlias)
+                .where(InstitutionAlias.normalized_alias.in_(keys))
+            )
+            .unique()
+            .scalars()
+            .all()
+        )
+        by_name = (
+            self._session.execute(
+                select(Institution).where(Institution.normalized_name.in_(keys))
+            )
+            .scalars()
+            .all()
+        )
+        found: dict[int, Institution] = {}
+        for item in (*by_alias, *by_name):
+            found.setdefault(item.id, item)
+        return list(found.values())
+
     def _pick_institution(
         self,
         candidates: list[Institution],
@@ -351,16 +408,39 @@ class IngestService:
                 left_swift=swift_bic,
                 right_swift=candidate.swift_bic,
             )
-            # An exact normalized-name hit inside the same country is itself
-            # sufficient; otherwise corroboration is required.
+            # An exact normalized-name hit is sufficient when the countries
+            # agree, when either side's country is unknown, or when something
+            # independent corroborates it.
+            #
+            # The last case matters more than it looks. The country arriving
+            # with a record is the country the *BIN* is issued in, which is not
+            # the institution's country of domicile: one bank issues in several
+            # markets. Treating issuance country as institution identity would
+            # split a single bank into one record per market — so it is used as
+            # evidence, never as a discriminator on its own.
             same_country = bool(
                 country and candidate.country_id and candidate.country_id == country.id
             )
+            country_unknown = country is None or candidate.country_id is None
+            corroborated = (
+                score.evidence.same_website_host or score.evidence.same_swift_bic
+            )
             exact_name = squash(candidate.display_name) == squash(display)
-            if (exact_name and (same_country or country is None)) or score.can_merge:
+            alias_hit = self._is_alias_of(candidate, display)
+            if (
+                (exact_name or alias_hit)
+                and (same_country or country_unknown or corroborated)
+            ) or score.can_merge:
                 if best is None or score.score > best[0]:
                     best = (score.score, candidate)
         return best[1] if best else None
+
+    def _is_alias_of(self, candidate: Institution, display: str) -> bool:
+        """Whether *display* is a recorded alias of *candidate*."""
+        normalized = name_normalizer.normalized_form(display)
+        if not normalized:
+            return False
+        return any(alias.normalized_alias == normalized for alias in candidate.aliases)
 
     def _enrich_institution(
         self,
@@ -537,7 +617,15 @@ class IngestService:
                 bin=normalized.bin,
                 iin=normalized.iin,
                 iin_length=raw.iin_length or normalized.iin_length,
+                # The published digits *are* the assignment: its length is
+                # recorded rather than inferred, so a six-digit root and an
+                # eight-digit assignment under it stay distinct records.
+                prefix=normalized.prefix,
+                prefix_length=normalized.prefix_length,
+                prefix_type=normalized.prefix_type,
                 bin_int=normalized.bin_int,
+                span_low=normalized.range_low,
+                span_high=normalized.range_high,
                 prefix6=normalized.prefix6,
                 prefix8=normalized.prefix8,
                 confidence=raw.confidence,
@@ -559,9 +647,25 @@ class IngestService:
         self._record_claims(record, raw, values)
 
         if institution is not None:
-            self._link(record, institution, RelationshipType.ISSUER, raw.confidence, primary=True)
+            self._link(
+                record,
+                institution,
+                _relationship_for(raw),
+                raw.confidence,
+                primary=True,
+                is_current=raw.effective_to is None,
+                effective_from=raw.effective_from,
+                effective_to=raw.effective_to,
+            )
         if parent is not None and (institution is None or parent.id != institution.id):
-            self._link(record, parent, RelationshipType.PARENT, raw.confidence * 0.9, primary=False)
+            self._link(
+                record,
+                parent,
+                RelationshipType.PARENT,
+                raw.confidence * 0.9,
+                primary=False,
+                effective_from=raw.effective_from,
+            )
 
         if raw.bin_high:
             self._ensure_range(raw, normalized.bin, institution, network, country, values, result)
@@ -677,6 +781,9 @@ class IngestService:
         confidence: float,
         *,
         primary: bool,
+        is_current: bool = True,
+        effective_from: datetime | None = None,
+        effective_to: datetime | None = None,
     ) -> None:
         existing = self._session.execute(
             select(BinInstitution).where(
@@ -688,13 +795,29 @@ class IngestService:
         if existing is not None:
             existing.last_updated = datetime.now(UTC)
             return
+        scored = score_relationship(
+            LookupStrategy.EXACT_ASSIGNED
+            if (record.prefix_length or len(record.bin)) >= 8
+            else LookupStrategy.EXACT_6,
+            stored_confidence=confidence,
+            relationship_is_issuing=relationship.is_issuing,
+            is_current=is_current,
+        )
         self._session.add(
             BinInstitution(
                 bin_id=record.id,
                 institution_id=institution.id,
                 relationship_type=relationship.value,
                 is_primary=primary,
+                status=RecordStatus.ACTIVE.value
+                if is_current
+                else RecordStatus.RETIRED.value,
+                effective_from=effective_from,
+                effective_to=effective_to,
+                is_current=is_current,
                 confidence=confidence,
+                confidence_level=scored.level.value,
+                confidence_reasons="; ".join(scored.reasons) or None,
             )
         )
 
@@ -738,10 +861,34 @@ class IngestService:
                 is_commercial=values.get("is_commercial"),
                 currency_code=values.get("currency_code"),
                 status=values.get("status") or RecordStatus.ACTIVE.value,
+                range_type=(raw.range_type or RangeType.ISSUER_RANGE.value),
+                # Stored rather than computed, so "narrowest containing range"
+                # is an indexed ORDER BY instead of a scan-and-subtract.
+                span=normalized.high_int - normalized.low_int,
+                effective_from=raw.effective_from,
+                effective_to=raw.effective_to,
+                is_current=raw.effective_to is None,
                 confidence=raw.confidence,
             )
         )
         result.ranges_created += 1
+
+
+def _relationship_for(raw: RawBinRecord) -> RelationshipType:
+    """What kind of relationship a record asserts.
+
+    A record carrying an end date describes an issuer that no longer issues,
+    which is a different fact from a current issuer and must not be presented
+    as one.
+    """
+    if raw.relationship:
+        try:
+            return RelationshipType(raw.relationship.strip().lower())
+        except ValueError:
+            logger.debug("Unknown relationship type in source data; treating as issuer")
+    if raw.effective_to is not None:
+        return RelationshipType.FORMER_ISSUER
+    return RelationshipType.ISSUER
 
 
 def _uid(prefix: str, *parts: str) -> str:
