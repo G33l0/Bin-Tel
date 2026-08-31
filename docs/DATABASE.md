@@ -37,16 +37,26 @@ between packages; the values are the contract.
 
 ### Core tables
 
-**`bins`** — one row per issuer identification number.
+**`bins`** — one row per **allocation**, not per bank.
 
-`bin`, `iin`, `iin_length`, `bin_int`, `prefix6`, `prefix8`, `network_id`,
-`brand`, `card_type`, `funding_type`, `is_prepaid`, `is_commercial`,
-`country_id`, `currency_code`, `status`, `confidence`, `first_seen`,
-`last_updated`.
+`bin`, `iin`, `iin_length`, **`prefix`**, **`prefix_length`**,
+**`prefix_type`**, `bin_int`, **`span_low`**, **`span_high`**, `prefix6`,
+`prefix8`, `network_id`, `brand`, `card_type`, `funding_type`, `is_prepaid`,
+`is_commercial`, `country_id`, `currency_code`, `status`, `confidence`,
+`first_seen`, `last_updated`.
 
-`bin_int`, `prefix6` and `prefix8` are denormalised deliberately: prefix and
-range queries become integer comparisons and index scans instead of `LIKE`
-against a text column.
+`prefix` and `prefix_length` are the identity. A six-digit root and an
+eight-digit assignment beneath it are separate allocations that may belong to
+different issuers, and recording the assigned length is what keeps them apart —
+see [LOOKUP.md](LOOKUP.md).
+
+`prefix_type` is `root` (a six-digit IIN), `extended` (an eight-digit
+assignment) or `range`.
+
+`span_low`/`span_high` are the inclusive numeric span the prefix covers at the
+eight-digit padding width, so "does this root contain that eight-digit query"
+is one indexed integer comparison. `bin_int`, `prefix6` and `prefix8` are
+denormalised for the same reason: index scans instead of `LIKE` against text.
 
 **`institutions`** — one row per financial institution.
 
@@ -55,12 +65,36 @@ against a text column.
 `institution_type`, `parent_id` (banks own banks), `country_id`, `website`,
 `swift_bic`, `status`, `confidence`.
 
-**`bin_institutions`** — the many-to-many link, with `relationship_type`
-(issuer, acquirer, processor, sponsor), `is_primary` and a per-link confidence.
-A BIN can legitimately have several institutions; one is primary.
+**`bin_institutions`** — the many-to-many link, and the place time is
+recorded.
 
-**`bin_ranges`** — allocated ranges, with integer endpoints and a `width`, so a
-BIN that has no exact row can still be resolved to its allocation.
+`relationship_type` (issuer, former issuer, parent, subsidiary, program issuer,
+processor-associated, …), `is_primary`, `status`, **`effective_from`**,
+**`effective_to`**, **`is_current`**, `confidence`, `confidence_level`,
+`confidence_reasons`.
+
+A relationship is a fact with a lifetime. An issuer that transferred a
+portfolio in 2024 was still the issuer before then, and a lookup that forgets
+that cannot answer a question about a card issued in 2022. A BIN can
+legitimately have several institutions; all of them are returned.
+
+These relationships describe **issuance and ownership only**. Nothing here
+should be read as saying where a transaction is routed or switched.
+
+**`institution_relationships`** — how two institutions relate to each other:
+parent, subsidiary, predecessor, successor, brand-of, processor-for, each with
+its own lifetime. `institutions.parent_id` models one parent, which is not
+enough — a bank can be the successor of one entity, a brand of another and a
+subsidiary of a third. Following these is what makes an institution lookup
+complete.
+
+**`bin_ranges`** — allocated ranges, with integer endpoints, a `width`, a
+stored **`span`** and a **`range_type`** (`account_range`, `issuer_range`,
+`root_block`), plus `effective_from`/`effective_to`/`is_current`.
+
+An account range is the most specific authoritative allocation there is and
+outranks a broader issuer range; the stored span makes "narrowest containing
+range" an indexed `ORDER BY` rather than a scan-and-subtract.
 
 **`institution_aliases`** — every name an institution is known by, with an
 `alias_type` (legal, trading, former, abbreviation, endonym) and confidence.
@@ -91,8 +125,11 @@ record — created, updated, retired, reassigned, merged — keyed by the *value
 
 Every hot query is covered:
 
-- `bins`: unique on `bin`; `bin_int`, `prefix6`, `prefix8`; composite covering
-  indexes on `(country_id, network_id)`, `(card_type, funding_type)`, and
+- `bins`: unique on `bin`; `bin_int`, `prefix6`, `prefix8`;
+  `(prefix, prefix_length)`, `(prefix_length, bin_int)`,
+  `(span_low, span_high)` and `(prefix_type, prefix_length)` for
+  length-aware containment; composite covering indexes on
+  `(country_id, network_id)`, `(card_type, funding_type)`, and
   `(network_id, card_type)` for the analytics rollups
 - `bin_ranges`: `range_low_int` and a `(range_low_int, range_high_int)` span
   index
@@ -100,7 +137,12 @@ Every hot query is covered:
   `country_id`
 - `institution_aliases`: `normalized_alias`
 - `addresses`: `institution_id`, `normalized_city`, `normalized_postal_code`
-- `bin_institutions`: both directions
+- `bin_institutions`: both directions, plus `(bin_id, is_current,
+  relationship_type)` and `(institution_id, is_current)` for current/historical
+  filtering
+- `bin_ranges`: `(is_current, range_low_int, range_high_int)` and
+  `(range_type, span)` for narrowest-first range resolution
+- `staging_records`: `(batch_id, status)` and `(prefix, prefix_length)`
 
 `ANALYZE` runs after every bulk load, so the query planner has real statistics.
 
@@ -170,6 +212,21 @@ Backups use SQLite's online backup API, so a snapshot can be taken while the
 database is open, and the copy is always consistent.
 
 ---
+
+## Staging
+
+Imported data never lands directly in `bins` and `institutions`. It goes to
+`staging_records` first and walks a fixed pipeline — normalize, validate,
+resolve, conflict-check, promote — described in [LOOKUP.md](LOOKUP.md).
+
+## Quality metrics
+
+`data_quality_metrics` holds twelve figures counted from the database that
+carries them: resolution rate, eight-digit and legacy coverage, country and
+network coverage, current-record coverage, duplicate and conflict rates, and
+the gaps. Each row keeps its numerator *and* denominator, so a ratio can always
+be explained, and a metric with nothing to measure reports "not measured"
+rather than a misleading 100%.
 
 ## Normalization and deduplication
 

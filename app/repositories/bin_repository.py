@@ -341,7 +341,10 @@ class BinRepository(BaseRepository):
         if not institution_ids:
             return Page(items=[], total=0, page=request.page, page_size=request.page_size)
         with self.session() as session:
-            statement = self._row_statement(filters).where(
+            # Standing is filtered on the *link*, not on the row: a BIN can be
+            # current for one institution and historical for another, and
+            # applying both would drop exactly the rows being asked for.
+            statement = self._row_statement(_without_standing(filters)).where(
                 self._scope(institution_ids, filters)
             )
             statement = self._apply_sort(statement, request)
@@ -367,9 +370,10 @@ class BinRepository(BaseRepository):
         if not institution_ids:
             return []
         with self.session() as session:
+            resolved = filters or BinFilters()
             statement = (
-                self._row_statement(filters or BinFilters())
-                .where(self._scope(institution_ids, filters or BinFilters()))
+                self._row_statement(_without_standing(resolved))
+                .where(self._scope(institution_ids, resolved))
                 .order_by(Bin.bin.asc())
                 .limit(limit)
             )
@@ -780,6 +784,11 @@ class BinRepository(BaseRepository):
             is_current=True if is_current is None else bool(is_current),
             relationship_type=data.get("relationship_type"),
         )
+
+
+def _without_standing(filters: BinFilters) -> BinFilters:
+    """The same filters with the standing clause removed."""
+    return filters.model_copy(update={"is_current": None})
 
 
 def _label(value: str | None) -> str | None:

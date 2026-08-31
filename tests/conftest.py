@@ -115,6 +115,38 @@ def context(config, paths, database_path):
 
 
 @pytest.fixture(scope="session")
+def scenario_database(tmp_path_factory) -> Path:
+    """The lookup-engine scenarios, built once per session.
+
+    Every record is synthetic — see :mod:`tests.fixtures.scenarios`.
+    """
+    from tests.fixtures import scenarios
+
+    return scenarios.build(tmp_path_factory.mktemp("scenarios") / "scenarios.sqlite")
+
+
+@pytest.fixture
+def scenario_manager(tmp_path, scenario_database):
+    """An open manager over a private copy of the scenario database."""
+    from app.database.engine import DatabaseManager
+
+    destination = tmp_path / "scenarios.sqlite"
+    shutil.copy2(scenario_database, destination)
+    manager = DatabaseManager(destination)
+    manager.open()
+    yield manager
+    manager.close()
+
+
+@pytest.fixture
+def lookup(scenario_manager):
+    from app.repositories.bin_repository import BinRepository
+    from app.services.lookup_service import LookupService
+
+    return LookupService(BinRepository(scenario_manager))
+
+
+@pytest.fixture(scope="session")
 def qapp():
     """One QApplication for the whole session; Qt allows no more."""
     from PyQt6.QtWidgets import QApplication

@@ -31,7 +31,7 @@ only. Log output is passed through a redaction filter before it is written.
 
 | | |
 |---|---|
-| **BIN lookup** | Exact match, then prefix, then allocated range. Sub-millisecond against the local database. |
+| **BIN lookup** | Range-aware and length-aware: an exact 8-digit assignment or an account range always outranks the 6-digit root it sits under. Reports every relationship, its standing and its confidence. |
 | **Bank lookup** | Search an institution by display name, legal name or alias — exact, prefix, contains or fuzzy — and browse its whole BIN portfolio. |
 | **Advanced search** | Nineteen criteria combined in one query, with saved searches and favourites. |
 | **Command palette** | `Ctrl+K` from anywhere: pages, commands, BINs and institutions in one list. |
@@ -177,6 +177,7 @@ compares a plan name — it asks the entitlement service about a named feature.
 
 | | |
 |---|---|
+| [LOOKUP.md](docs/LOOKUP.md) | The lookup engine: allocations, specificity, confidence, conflicts |
 | [DATABASE.md](docs/DATABASE.md) | Schema, the two-database split, indexes, integrity, health |
 | [UPDATES.md](docs/UPDATES.md) | Manifests, the install pipeline, rollback, deltas |
 | [LICENSING.md](docs/LICENSING.md) | Signed licences, activation, devices, offline grace |
