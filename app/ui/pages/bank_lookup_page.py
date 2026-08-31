@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QComboBox, QLabel, QStackedWidget, QWidget
+from PyQt6.QtWidgets import QComboBox, QLabel, QWidget
 
 from app.core.errors import ValidationError
 from app.models.schemas import (
@@ -16,6 +16,7 @@ from app.models.schemas import (
 )
 from app.ui.dialogs.export_dialog import ExportDialog
 from app.ui.pages.base_page import BasePage
+from app.ui.widgets.adaptive_stack import AdaptiveStack
 from app.ui.widgets.bank_result_view import BankResultView
 from app.ui.widgets.cards import Card
 from app.ui.widgets.search_box import SearchBox
@@ -68,7 +69,7 @@ class BankLookupPage(BasePage):
         self.content.addWidget(search_card)
 
         # -- result surfaces ------------------------------------------------
-        self.stack = QStackedWidget(self.surface)
+        self.stack = AdaptiveStack(self.surface)
         self.content.addWidget(self.stack, 1)
 
         self.idle_state = EmptyState(

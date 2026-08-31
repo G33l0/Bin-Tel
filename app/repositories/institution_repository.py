@@ -145,6 +145,27 @@ class InstitutionRepository(BaseRepository):
                 page_size=request.page_size,
             )
 
+    def uid_for(self, institution_id: int) -> str | None:
+        """The institution's stable uid.
+
+        Watchlists and favourites store this rather than the row id, because
+        row ids do not survive a database package replacement.
+        """
+        with self.session() as session:
+            return session.execute(
+                select(Institution.uid).where(Institution.id == institution_id)
+            ).scalar()
+
+    def get_by_uid(self, uid: str) -> InstitutionDetail | None:
+        with self.session() as session:
+            institution = session.execute(
+                select(Institution).options(*self._options()).where(Institution.uid == uid)
+            ).unique().scalar_one_or_none()
+            if institution is None:
+                return None
+            counts = self._bin_counts(session, [institution.id])
+            return self._to_detail(institution, counts.get(institution.id, 0))
+
     def find_by_normalized_name(self, normalized: str) -> list[int]:
         """Candidate ids for the deduplication service."""
         with self.session() as session:

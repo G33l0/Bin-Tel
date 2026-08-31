@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QFontMetrics
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -26,21 +27,57 @@ class NavItem:
     icon: str
     tooltip: str = ""
     section: str = ""
+    #: Feature this page centres on. When the plan does not include it the
+    #: entry stays visible and carries a plan badge — it is never removed,
+    #: because hiding navigation makes an application feel broken.
+    feature: str = ""
 
 
 #: The application's primary navigation, in order.
 NAV_ITEMS: tuple[NavItem, ...] = (
-    NavItem("dashboard", "Dashboard", "dashboard", "Database health and coverage", "Intelligence"),
-    NavItem("bin_lookup", "BIN Lookup", "bin-lookup", "Look up a BIN or IIN (Ctrl+1)", "Intelligence"),
-    NavItem("bank_lookup", "Bank Lookup", "bank-lookup", "Find an institution and its BINs (Ctrl+2)", "Intelligence"),
-    NavItem("database", "Database", "database", "Manage the local database", "Maintenance"),
+    NavItem("dashboard", "Dashboard", "dashboard", "Database health and coverage (Ctrl+1)", "Intelligence"),
+    NavItem("bin_lookup", "BIN Lookup", "bin-lookup", "Look up a BIN or IIN (Ctrl+2)", "Intelligence"),
+    NavItem("bank_lookup", "Bank Lookup", "bank-lookup", "Find an institution and its BINs (Ctrl+3)", "Intelligence"),
+    NavItem(
+        "institutions",
+        "Institution Intelligence",
+        "shield",
+        "Profile an institution and its portfolio (Ctrl+4)",
+        "Intelligence",
+        feature="institution_intelligence",
+    ),
+    NavItem(
+        "analytics",
+        "Analytics",
+        "columns",
+        "Coverage, distribution and growth (Ctrl+5)",
+        "Intelligence",
+        feature="advanced_analytics",
+    ),
+    NavItem(
+        "watchlists",
+        "Watchlists",
+        "filter",
+        "Track records and see what changed",
+        "Intelligence",
+        feature="watchlists",
+    ),
+    NavItem("reports", "Reports", "export", "Build and export reports", "Intelligence"),
+    NavItem("database", "Database", "database", "Database status and backups", "Maintenance"),
+    NavItem("admin", "Administration", "shield", "Health, integrity and maintenance", "Maintenance"),
     NavItem("updates", "Updates", "updates", "Check for and install database updates", "Maintenance"),
+    NavItem("license", "Plan & Licence", "backup", "Your plan, licence and devices", "Application"),
     NavItem("settings", "Settings", "settings", "Preferences (Ctrl+,)", "Application"),
     NavItem("about", "About", "about", f"About Bin-Tel {APP_VERSION}", "Application"),
 )
 
-EXPANDED_WIDTH = 216
+EXPANDED_WIDTH = 228
 COLLAPSED_WIDTH = 60
+
+
+def _escape_mnemonic(text: str) -> str:
+    """Keep a literal ampersand visible — Qt would treat it as an accelerator."""
+    return text.replace("&", "&&")
 
 
 class NavButton(QPushButton):
@@ -49,6 +86,9 @@ class NavButton(QPushButton):
     def __init__(self, item: NavItem, parent: QWidget | None = None) -> None:
         super().__init__(item.label, parent)
         self.item = item
+        self._collapsed = False
+        self._badge = ""
+        self._count = 0
         self.setObjectName("NavButton")
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -64,9 +104,54 @@ class NavButton(QPushButton):
         colour = theme.nav_active_fg if self.isChecked() else theme.nav_fg
         self.setIcon(provider.icon(self.item.icon, colour, 19))
 
+    def set_badge(self, badge: str) -> None:
+        """A plan marker such as ``PRO``, shown beside the label."""
+        self._badge = badge
+        self._apply_text()
+
+    def set_count(self, count: int) -> None:
+        """An unread count — new watchlist alerts, for instance."""
+        self._count = max(0, count)
+        self._apply_text()
+
     def set_collapsed(self, collapsed: bool) -> None:
-        self.setText("" if collapsed else self.item.label)
-        self.setToolTip(self.item.tooltip or self.item.label)
+        self._collapsed = collapsed
+        self._apply_text()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._apply_text()
+
+    def _text_width(self) -> int:
+        """Room the label has once the icon and the QSS padding are taken."""
+        return max(48, self.width() - self.iconSize().width() - 46)
+
+    def _apply_text(self) -> None:
+        suffix = str(self._count) if self._count else self._badge
+        if self._collapsed:
+            self.setText("")
+        elif suffix:
+            # The badge always survives; the label is what gets elided, so a
+            # long entry never truncates "PRO" down to "P".
+            metrics = QFontMetrics(self.font())
+            room = self._text_width() - metrics.horizontalAdvance(f"   {suffix}")
+            label = metrics.elidedText(
+                self.item.label, Qt.TextElideMode.ElideRight, max(32, room)
+            )
+            self.setText(_escape_mnemonic(f"{label}   {suffix}"))
+        else:
+            self.setText(_escape_mnemonic(self.item.label))
+
+        tooltip = self.item.tooltip or self.item.label
+        accessible = self.item.label
+        if self._count:
+            tooltip = f"{tooltip} — {self._count} new"
+            accessible = f"{accessible}, {self._count} new"
+        elif self._badge:
+            tooltip = f"{tooltip} — included with {self._badge.title()}"
+            accessible = f"{accessible}, {self._badge.title()} feature"
+        self.setToolTip(tooltip)
+        self.setAccessibleName(accessible)
 
 
 class Sidebar(QFrame):
@@ -169,6 +254,22 @@ class Sidebar(QFrame):
 
     def toggle_collapsed(self) -> None:
         self.set_collapsed(not self._collapsed, notify=True)
+
+    # -- badges -----------------------------------------------------------
+    def apply_entitlements(self, entitlements) -> None:
+        """Mark pages whose feature the current plan does not include."""
+        for key, button in self._buttons.items():
+            feature = button.item.feature
+            if not feature or entitlements.has_feature(feature):
+                button.set_badge("")
+                continue
+            required = entitlements.catalogue.plan_for_feature(feature)
+            button.set_badge(required.plan.label.upper() if required else "PRO")
+
+    def set_badge_count(self, key: str, count: int) -> None:
+        button = self._buttons.get(key)
+        if button is not None:
+            button.set_count(count)
 
     def refresh_icons(self) -> None:
         provider = IconProvider.instance()

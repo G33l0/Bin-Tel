@@ -48,6 +48,13 @@ class BankService:
     def get(self, institution_id: int) -> InstitutionDetail | None:
         return self._institutions.get(institution_id)
 
+    def get_by_uid(self, uid: str) -> InstitutionDetail | None:
+        """Resolve an institution by its stable uid (used by watchlists)."""
+        return self._institutions.get_by_uid(uid)
+
+    def uid_for(self, institution_id: int) -> str | None:
+        return self._institutions.uid_for(institution_id)
+
     def bins_page(
         self,
         institution_id: int,

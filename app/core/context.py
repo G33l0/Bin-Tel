@@ -15,6 +15,7 @@ Two databases, deliberately:
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from app.core.config import ConfigManager, LicenseServiceMode
@@ -81,6 +82,8 @@ class AppContext:
         config: ConfigManager | None = None,
         paths: AppPaths | None = None,
     ) -> None:
+        #: When this context was built — the reference point for startup time.
+        self.launched_at = time.monotonic()
         self.paths = paths or get_paths()
         self.config = config or ConfigManager(self.paths)
         # Re-reading here would discard overrides the caller already applied

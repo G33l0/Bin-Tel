@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from pathlib import Path
 
 # Make ``python app/main.py`` work as well as ``python -m app.main``.
@@ -229,7 +230,14 @@ def _run(application, context, themes, splash) -> int:
     window.raise_()
     window.activateWindow()
 
-    application.aboutToQuit.connect(context.shutdown)
+    started_at = time.monotonic()
+    context.start_session(
+        first_run=needs_setup,
+        startup_ms=(started_at - context.launched_at) * 1000,
+    )
+    application.aboutToQuit.connect(
+        lambda: context.shutdown(session_seconds=time.monotonic() - started_at)
+    )
 
     try:
         return application.exec()

@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSlider,
     QSpinBox,
@@ -24,10 +25,13 @@ from PyQt6.QtWidgets import (
 )
 
 from app.core.config import (
+    InstallPolicy,
+    LicenseServiceMode,
     LogLevel,
     LookupMode,
     SearchBehavior,
     SidebarBehavior,
+    UpdateCheckMode,
     UpdateFrequency,
 )
 from app.core.logging_config import set_level
@@ -102,6 +106,7 @@ class SettingsPage(BasePage):
     database_path_changed = pyqtSignal()
     search_settings_changed = pyqtSignal()
     general_changed = pyqtSignal()
+    license_changed = pyqtSignal()
 
     def __init__(self, context, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -117,8 +122,13 @@ class SettingsPage(BasePage):
 
         self.tabs.addTab(self._build_general(), "General")
         self.tabs.addTab(self._build_database(), "Database")
+        self.tabs.addTab(self._build_updates(), "Updates")
         self.tabs.addTab(self._build_appearance(), "Appearance")
         self.tabs.addTab(self._build_search(), "Search")
+        self.tabs.addTab(self._build_watchlists(), "Watchlists")
+        self.tabs.addTab(self._build_reports(), "Reports")
+        self.tabs.addTab(self._build_license(), "Licence")
+        self.tabs.addTab(self._build_privacy(), "Privacy & Telemetry")
         self.tabs.addTab(self._build_advanced(), "Advanced")
 
         self.load()
@@ -195,49 +205,39 @@ class SettingsPage(BasePage):
         location.body.addWidget(location_widget)
         layout.addWidget(location)
 
-        updates = SettingsSection(
-            "Updates",
-            "Bin-Tel never forces an update. You decide when a new database is installed.",
+        backups = SettingsSection(
+            "Backups",
+            "Bin-Tel keeps a snapshot before every update so a failure can be undone.",
             page,
         )
-        self.automatic_updates = updates.add_setting(
-            "Check for updates automatically",
-            QCheckBox(),
-            "Bin-Tel fetches a small metadata file — never the whole database — to see "
-            "whether a newer one exists.",
+        self.backups_enabled = backups.add_setting(
+            "Keep database backups", QCheckBox(), "Turn off only if disk space is scarce."
         )
-        frequency = QComboBox()
-        for option in UpdateFrequency:
-            frequency.addItem(option.label, option.value)
-        self.update_frequency = updates.add_setting(
-            "Update frequency", frequency, "How often that check runs."
-        )
-        self.download_automatically = updates.add_setting(
-            "Download updates automatically",
-            QCheckBox(),
-            "Start the download as soon as a newer database is found.",
-        )
-        self.install_automatically = updates.add_setting(
-            "Install updates automatically",
-            QCheckBox(),
-            "Activate a downloaded database once it has passed verification.",
-        )
-        self.backup_before_update = updates.add_setting(
+        self.backup_before_update = backups.add_setting(
             "Back up before updating",
             QCheckBox(),
             "Keep a snapshot so a failed update can be rolled back automatically.",
         )
         retention = QSpinBox()
         retention.setRange(1, 20)
-        self.max_backups = updates.add_setting(
+        self.max_backups = backups.add_setting(
             "Backups to keep", retention, "Older snapshots are pruned automatically."
         )
-
-        check_now = QPushButton("Check for Updates Now", updates)
-        check_now.setProperty("variant", "primary")
-        check_now.clicked.connect(lambda: self.navigate("updates"))
-        updates.body.addWidget(check_now, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(updates)
+        backup_dir_widget = QWidget(backups)
+        backup_dir_layout = hbox(backup_dir_widget, spacing=8)
+        self.backup_path_label = QLabel("", backup_dir_widget)
+        self.backup_path_label.setProperty("role", "muted")
+        self.backup_path_label.setWordWrap(True)
+        backup_dir_layout.addWidget(self.backup_path_label, 1)
+        choose_backups = QPushButton("Change…", backup_dir_widget)
+        choose_backups.clicked.connect(self._choose_backup_directory)
+        backup_dir_layout.addWidget(choose_backups)
+        reset_backups = QPushButton("Default", backup_dir_widget)
+        reset_backups.setProperty("variant", "ghost")
+        reset_backups.clicked.connect(self._reset_backup_directory)
+        backup_dir_layout.addWidget(reset_backups)
+        backups.add_setting("Backup location", backup_dir_widget, "Where snapshots are written.")
+        layout.addWidget(backups)
 
         source = SettingsSection(
             "Database source",
@@ -246,8 +246,6 @@ class SettingsPage(BasePage):
         )
         source_widget = QWidget(source)
         source_layout = hbox(source_widget, spacing=8)
-        from PyQt6.QtWidgets import QLineEdit
-
         self.manifest_url = QLineEdit(source_widget)
         self.manifest_url.setAccessibleName("Database manifest URL")
         self.manifest_url.editingFinished.connect(self._save_manifest_url)
@@ -260,15 +258,261 @@ class SettingsPage(BasePage):
 
         layout.addItem(expanding_spacer(horizontal=False))
 
-        self.automatic_updates.toggled.connect(self._save_database)  # type: ignore[attr-defined]
-        self.update_frequency.currentIndexChanged.connect(self._save_database)  # type: ignore[attr-defined]
-        for widget in (
-            self.download_automatically,
-            self.install_automatically,
-            self.backup_before_update,
-        ):
+        for widget in (self.backups_enabled, self.backup_before_update):
             widget.toggled.connect(self._save_database)  # type: ignore[attr-defined]
         self.max_backups.valueChanged.connect(self._save_database)  # type: ignore[attr-defined]
+        return page
+
+    def _build_updates(self) -> QWidget:
+        page, layout = self._page()
+        section = SettingsSection(
+            "Database updates",
+            "Bin-Tel never forces an update. You decide when a new database is installed.",
+            page,
+        )
+        self.automatic_updates = section.add_setting(
+            "Check for updates automatically",
+            QCheckBox(),
+            "Bin-Tel fetches a small metadata file — never the whole database — to see "
+            "whether a newer one exists.",
+        )
+        check_mode = QComboBox()
+        for option in UpdateCheckMode:
+            check_mode.addItem(option.label, option.value)
+        self.check_mode = section.add_setting(
+            "When to check", check_mode, "On startup, on a schedule, or only on request."
+        )
+        frequency = QComboBox()
+        for option in UpdateFrequency:
+            frequency.addItem(option.label, option.value)
+        self.update_frequency = section.add_setting(
+            "Update frequency", frequency, "How often the scheduled check runs."
+        )
+        policy = QComboBox()
+        for option in InstallPolicy:
+            policy.addItem(option.label, option.value)
+        self.install_policy = section.add_setting(
+            "When an update is found",
+            policy,
+            "Whether Bin-Tel downloads and installs on its own, or waits for you.",
+        )
+        self.verify_after_update = section.add_setting(
+            "Verify after installing",
+            QCheckBox(),
+            "Re-check integrity once a new database is active.",
+        )
+        self.allow_delta_updates = section.add_setting(
+            "Use incremental updates when available",
+            QCheckBox(),
+            "Download only what changed when the release publishes a delta.",
+        )
+
+        check_now = QPushButton("Check for Updates Now", section)
+        check_now.setProperty("variant", "primary")
+        check_now.clicked.connect(lambda: self.navigate("updates"))
+        section.body.addWidget(check_now, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(section)
+        layout.addItem(expanding_spacer(horizontal=False))
+
+        self.automatic_updates.toggled.connect(self._save_updates)  # type: ignore[attr-defined]
+        self.check_mode.currentIndexChanged.connect(self._save_updates)  # type: ignore[attr-defined]
+        self.update_frequency.currentIndexChanged.connect(self._save_updates)  # type: ignore[attr-defined]
+        self.install_policy.currentIndexChanged.connect(self._save_updates)  # type: ignore[attr-defined]
+        self.verify_after_update.toggled.connect(self._save_updates)  # type: ignore[attr-defined]
+        self.allow_delta_updates.toggled.connect(self._save_updates)  # type: ignore[attr-defined]
+        return page
+
+    def _build_watchlists(self) -> QWidget:
+        page, layout = self._page()
+        section = SettingsSection(
+            "Watchlists",
+            "How Bin-Tel reports changes to the records you are tracking.",
+            page,
+        )
+        self.scan_after_update = section.add_setting(
+            "Check watchlists after each update",
+            QCheckBox(),
+            "Compare every watched record against the newly installed database.",
+        )
+        self.in_app_notifications = section.add_setting(
+            "Show alerts in the application", QCheckBox(), "Adds them to the notification centre."
+        )
+        self.desktop_notifications = section.add_setting(
+            "Show desktop notifications",
+            QCheckBox(),
+            "Uses the system notification area where the desktop supports it.",
+        )
+        self.auto_acknowledge = section.add_setting(
+            "Mark alerts read automatically",
+            QCheckBox(),
+            "Alerts are recorded but never shown as unread.",
+        )
+        retention = QSpinBox()
+        retention.setRange(7, 1825)
+        retention.setSuffix(" days")
+        self.keep_events_days = section.add_setting(
+            "Keep alert history for", retention, "Older alerts are removed automatically."
+        )
+        layout.addWidget(section)
+        layout.addItem(expanding_spacer(horizontal=False))
+
+        for widget in (
+            self.scan_after_update,
+            self.in_app_notifications,
+            self.desktop_notifications,
+            self.auto_acknowledge,
+        ):
+            widget.toggled.connect(self._save_watchlists)  # type: ignore[attr-defined]
+        self.keep_events_days.valueChanged.connect(self._save_watchlists)  # type: ignore[attr-defined]
+        return page
+
+    def _build_reports(self) -> QWidget:
+        page, layout = self._page()
+        section = SettingsSection("Reports", "Where reports go and how they are built.", page)
+
+        location = QWidget(section)
+        location_layout = hbox(location, spacing=8)
+        self.reports_path_label = QLabel("", location)
+        self.reports_path_label.setProperty("role", "muted")
+        self.reports_path_label.setWordWrap(True)
+        location_layout.addWidget(self.reports_path_label, 1)
+        choose = QPushButton("Change…", location)
+        choose.clicked.connect(self._choose_reports_directory)
+        location_layout.addWidget(choose)
+        reset = QPushButton("Default", location)
+        reset.setProperty("variant", "ghost")
+        reset.clicked.connect(self._reset_reports_directory)
+        location_layout.addWidget(reset)
+        section.add_setting("Report location", location, "Where exported reports are saved.")
+
+        default_format = QComboBox()
+        from app.services.report_service import available_formats
+
+        for fmt in available_formats():
+            default_format.addItem(fmt.display, fmt.value)
+        self.default_report_format = section.add_setting(
+            "Default format", default_format, "Pre-selected in the report builder."
+        )
+        self.include_summary = section.add_setting(
+            "Include a summary block", QCheckBox(), "Adds totals and criteria above the table."
+        )
+        self.open_after_export = section.add_setting(
+            "Open reports after exporting", QCheckBox(), "Hands the file to your default viewer."
+        )
+        max_rows = QSpinBox()
+        max_rows.setRange(100, 1_000_000)
+        max_rows.setSingleStep(500)
+        self.max_report_rows = section.add_setting(
+            "Maximum rows per report",
+            max_rows,
+            "A ceiling so a broad report cannot take minutes to build.",
+        )
+        layout.addWidget(section)
+        layout.addItem(expanding_spacer(horizontal=False))
+
+        self.default_report_format.currentIndexChanged.connect(self._save_reports)  # type: ignore[attr-defined]
+        for widget in (self.include_summary, self.open_after_export):
+            widget.toggled.connect(self._save_reports)  # type: ignore[attr-defined]
+        self.max_report_rows.valueChanged.connect(self._save_reports)  # type: ignore[attr-defined]
+        return page
+
+    def _build_license(self) -> QWidget:
+        page, layout = self._page()
+        section = SettingsSection(
+            "Licensing service",
+            "Where Bin-Tel verifies your licence. Lookups never depend on this.",
+            page,
+        )
+        mode = QComboBox()
+        for option in LicenseServiceMode:
+            mode.addItem(option.label, option.value)
+        self.license_mode = section.add_setting(
+            "Service",
+            mode,
+            "The development service issues real signed licences locally, for "
+            "evaluating paid features without an account.",
+        )
+        self.license_url = QLineEdit()
+        self.license_url.setAccessibleName("Licensing API URL")
+        section.add_setting(
+            "Licensing API", self.license_url, "The endpoint activation and validation use."
+        )
+        self.revalidate_on_startup = section.add_setting(
+            "Verify the licence on startup",
+            QCheckBox(),
+            "Only when the offline grace window is more than half spent.",
+        )
+
+        open_license = QPushButton("Open the Plan & Licence page", section)
+        open_license.setProperty("variant", "primary")
+        open_license.clicked.connect(lambda: self.navigate("license"))
+        section.body.addWidget(open_license, 0, Qt.AlignmentFlag.AlignLeft)
+        layout.addWidget(section)
+        layout.addItem(expanding_spacer(horizontal=False))
+
+        self.license_mode.currentIndexChanged.connect(self._save_license)  # type: ignore[attr-defined]
+        self.license_url.editingFinished.connect(self._save_license)
+        self.revalidate_on_startup.toggled.connect(self._save_license)  # type: ignore[attr-defined]
+        return page
+
+    def _build_privacy(self) -> QWidget:
+        page, layout = self._page()
+
+        section = SettingsSection(
+            "Privacy & telemetry",
+            "Telemetry is off unless you turn it on, and Bin-Tel works identically "
+            "either way.",
+            page,
+        )
+        self.telemetry_enabled = section.add_setting(
+            "Help improve Bin-Tel by sending anonymous usage statistics",
+            QCheckBox(),
+            "Aggregated product events only. Turning this off also deletes anything "
+            "already queued.",
+        )
+        self.remember_search_history = section.add_setting(
+            "Remember recent searches",
+            QCheckBox(),
+            "Kept on this machine only, and never transmitted.",
+        )
+        self.crash_reports = section.add_setting(
+            "Send error type information when something fails",
+            QCheckBox(),
+            "The type of the error, never its message or your data.",
+        )
+        layout.addWidget(section)
+
+        detail = SettingsSection("What would be sent", parent=page)
+        self.telemetry_collect_label = QLabel("", detail)
+        self.telemetry_collect_label.setWordWrap(True)
+        detail.body.addWidget(self.telemetry_collect_label)
+        self.telemetry_exclude_label = QLabel("", detail)
+        self.telemetry_exclude_label.setWordWrap(True)
+        detail.body.addWidget(self.telemetry_exclude_label)
+        self.telemetry_queue_label = QLabel("", detail)
+        self.telemetry_queue_label.setProperty("role", "muted")
+        detail.body.addWidget(self.telemetry_queue_label)
+
+        queue_actions = hbox(spacing=8)
+        view_queue = QPushButton("View queued events", detail)
+        view_queue.setProperty("variant", "ghost")
+        view_queue.clicked.connect(self._show_telemetry_queue)
+        queue_actions.addWidget(view_queue)
+        clear_queue = QPushButton("Delete stored telemetry", detail)
+        clear_queue.setProperty("variant", "danger")
+        clear_queue.clicked.connect(self._clear_telemetry)
+        queue_actions.addWidget(clear_queue)
+        queue_actions.addItem(expanding_spacer())
+        detail.body.addLayout(queue_actions)
+        layout.addWidget(detail)
+        layout.addItem(expanding_spacer(horizontal=False))
+
+        for widget in (
+            self.telemetry_enabled,
+            self.remember_search_history,
+            self.crash_reports,
+        ):
+            widget.toggled.connect(self._save_privacy)  # type: ignore[attr-defined]
         return page
 
     def _build_appearance(self) -> QWidget:
@@ -451,14 +695,44 @@ class SettingsPage(BasePage):
         self.remember_window_position.setChecked(general.remember_window_position)
 
         database = settings.database
-        self.automatic_updates.setChecked(database.automatic_updates)
-        self._select_data(self.update_frequency, database.update_frequency.value)
-        self.download_automatically.setChecked(database.download_automatically)
-        self.install_automatically.setChecked(database.install_automatically)
+        self.backups_enabled.setChecked(database.backups_enabled)
         self.backup_before_update.setChecked(database.backup_before_update)
         self.max_backups.setValue(database.max_backups)
         self.manifest_url.setText(database.manifest_url)
         self.path_label.setText(str(self.context.database.path))
+        self.backup_path_label.setText(str(self.context.config.backups_path()))
+
+        self.automatic_updates.setChecked(database.automatic_updates)
+        self._select_data(self.check_mode, database.check_mode.value)
+        self._select_data(self.update_frequency, database.update_frequency.value)
+        self._select_data(self.install_policy, database.install_policy.value)
+        self.verify_after_update.setChecked(database.verify_after_update)
+        self.allow_delta_updates.setChecked(database.allow_delta_updates)
+
+        watchlists = settings.watchlists
+        self.scan_after_update.setChecked(watchlists.scan_after_update)
+        self.in_app_notifications.setChecked(watchlists.in_app_notifications)
+        self.desktop_notifications.setChecked(watchlists.desktop_notifications)
+        self.auto_acknowledge.setChecked(watchlists.auto_acknowledge)
+        self.keep_events_days.setValue(watchlists.keep_events_days)
+
+        reports = settings.reports
+        self._select_data(self.default_report_format, reports.default_format)
+        self.include_summary.setChecked(reports.include_summary)
+        self.open_after_export.setChecked(reports.open_after_export)
+        self.max_report_rows.setValue(reports.max_report_rows)
+        self.reports_path_label.setText(str(self.context.config.reports_path()))
+
+        license_settings = settings.license
+        self._select_data(self.license_mode, license_settings.service_mode.value)
+        self.license_url.setText(license_settings.api_url)
+        self.revalidate_on_startup.setChecked(license_settings.revalidate_on_startup)
+
+        privacy = settings.privacy
+        self.telemetry_enabled.setChecked(privacy.telemetry_enabled)
+        self.remember_search_history.setChecked(privacy.remember_search_history)
+        self.crash_reports.setChecked(privacy.crash_reports)
+        self._render_telemetry_detail()
 
         appearance = settings.appearance
         self._populate_themes()
@@ -529,14 +803,164 @@ class SettingsPage(BasePage):
         if self._loading:
             return
         database = self.context.config.settings.database
-        database.automatic_updates = self.automatic_updates.isChecked()
-        database.update_frequency = UpdateFrequency(self.update_frequency.currentData())
-        database.download_automatically = self.download_automatically.isChecked()
-        database.install_automatically = self.install_automatically.isChecked()
+        database.backups_enabled = self.backups_enabled.isChecked()
         database.backup_before_update = self.backup_before_update.isChecked()
         database.max_backups = int(self.max_backups.value())
         self._persist()
         self.context.apply_settings()
+
+    def _save_updates(self) -> None:
+        if self._loading:
+            return
+        database = self.context.config.settings.database
+        database.automatic_updates = self.automatic_updates.isChecked()
+        database.check_mode = UpdateCheckMode(self.check_mode.currentData())
+        database.update_frequency = UpdateFrequency(self.update_frequency.currentData())
+        policy = InstallPolicy(self.install_policy.currentData())
+        database.install_policy = policy
+        # The two legacy flags stay in step with the policy, so anything that
+        # reads them (the Updates page, a scheduled check) sees one answer.
+        database.download_automatically = policy in (
+            InstallPolicy.DOWNLOAD_ONLY,
+            InstallPolicy.AUTOMATIC,
+        )
+        database.install_automatically = policy is InstallPolicy.AUTOMATIC
+        database.verify_after_update = self.verify_after_update.isChecked()
+        database.allow_delta_updates = self.allow_delta_updates.isChecked()
+        self._persist()
+        self.context.apply_settings()
+
+    def _save_watchlists(self) -> None:
+        if self._loading:
+            return
+        watchlists = self.context.config.settings.watchlists
+        watchlists.scan_after_update = self.scan_after_update.isChecked()
+        watchlists.in_app_notifications = self.in_app_notifications.isChecked()
+        watchlists.desktop_notifications = self.desktop_notifications.isChecked()
+        watchlists.auto_acknowledge = self.auto_acknowledge.isChecked()
+        watchlists.keep_events_days = int(self.keep_events_days.value())
+        self._persist()
+
+    def _save_reports(self) -> None:
+        if self._loading:
+            return
+        reports = self.context.config.settings.reports
+        reports.default_format = str(self.default_report_format.currentData() or "pdf")
+        reports.include_summary = self.include_summary.isChecked()
+        reports.open_after_export = self.open_after_export.isChecked()
+        reports.max_report_rows = int(self.max_report_rows.value())
+        self._persist()
+        self.context.apply_settings()
+
+    def _save_license(self) -> None:
+        if self._loading:
+            return
+        settings = self.context.config.settings.license
+        settings.service_mode = LicenseServiceMode(self.license_mode.currentData())
+        try:
+            settings.api_url = self.license_url.text().strip()
+        except Exception:  # noqa: BLE001 - validation error from Pydantic
+            self.banner.show_message(
+                "The licensing API URL must start with https:// or http://.",
+                StateKind.DANGER,
+            )
+            self.license_url.setText(settings.api_url)
+            return
+        settings.revalidate_on_startup = self.revalidate_on_startup.isChecked()
+        self.license_url.setText(settings.api_url)
+        self._persist("Licensing service updated.")
+        self.context.reconfigure_licensing()
+        self.license_changed.emit()
+
+    def _save_privacy(self) -> None:
+        if self._loading:
+            return
+        privacy = self.context.config.settings.privacy
+        was_enabled = privacy.telemetry_enabled
+        privacy.telemetry_enabled = self.telemetry_enabled.isChecked()
+        privacy.telemetry_prompted = True
+        privacy.remember_search_history = self.remember_search_history.isChecked()
+        privacy.crash_reports = self.crash_reports.isChecked()
+        self._persist()
+        self.context.telemetry.set_enabled(privacy.telemetry_enabled)
+        if was_enabled and not privacy.telemetry_enabled:
+            self.banner.show_message(
+                "Telemetry is off and anything queued has been deleted.",
+                StateKind.SUCCESS,
+            )
+        elif privacy.telemetry_enabled and not was_enabled:
+            self.banner.show_message(
+                "Thank you — Bin-Tel will send aggregated usage statistics only.",
+                StateKind.SUCCESS,
+            )
+        self._render_telemetry_detail()
+
+    def _render_telemetry_detail(self) -> None:
+        telemetry = self.context.telemetry
+        self.telemetry_collect_label.setText(
+            "Sent when enabled:\n"
+            + "\n".join(f"  •  {line}" for line in telemetry.describe_collection())
+        )
+        self.telemetry_exclude_label.setText(
+            "Never sent:\n"
+            + "\n".join(f"  •  {line}" for line in telemetry.describe_exclusions())
+        )
+        counters = telemetry.counters()
+        total = sum(counters.values())
+        self.telemetry_queue_label.setText(
+            f"{telemetry.queue_size()} event(s) queued on this machine · "
+            f"{total:,} local usage counter(s) recorded."
+        )
+
+    def _show_telemetry_queue(self) -> None:
+        """Show exactly what is queued — the claim has to be checkable."""
+        from app.ui.dialogs.telemetry_dialog import TelemetryQueueDialog
+
+        TelemetryQueueDialog.show_queue(self, self.context.telemetry)
+        self._render_telemetry_detail()
+
+    def _clear_telemetry(self) -> None:
+        removed = self.context.telemetry.clear_all()
+        self._render_telemetry_detail()
+        self.banner.show_message(
+            f"{removed} stored telemetry record(s) deleted." if removed
+            else "There was no stored telemetry to delete.",
+            StateKind.SUCCESS,
+        )
+
+    def _choose_backup_directory(self) -> None:
+        directory = QFileDialog.getExistingDirectory(
+            self, "Choose a folder for database backups", str(self.context.config.backups_path())
+        )
+        if not directory:
+            return
+        self.context.config.settings.database.backup_directory = directory
+        self._persist("Backup location updated.")
+        self.context.apply_settings()
+        self.backup_path_label.setText(str(self.context.config.backups_path()))
+
+    def _reset_backup_directory(self) -> None:
+        self.context.config.settings.database.backup_directory = ""
+        self._persist()
+        self.context.apply_settings()
+        self.backup_path_label.setText(str(self.context.config.backups_path()))
+
+    def _choose_reports_directory(self) -> None:
+        directory = QFileDialog.getExistingDirectory(
+            self, "Choose a folder for reports", str(self.context.config.reports_path())
+        )
+        if not directory:
+            return
+        self.context.config.settings.reports.output_directory = directory
+        self._persist("Report location updated.")
+        self.context.apply_settings()
+        self.reports_path_label.setText(str(self.context.config.reports_path()))
+
+    def _reset_reports_directory(self) -> None:
+        self.context.config.settings.reports.output_directory = ""
+        self._persist()
+        self.context.apply_settings()
+        self.reports_path_label.setText(str(self.context.config.reports_path()))
 
     def _save_manifest_url(self) -> None:
         if self._loading:
@@ -728,4 +1152,7 @@ class SettingsPage(BasePage):
 
     def refresh(self) -> None:
         self.path_label.setText(str(self.context.database.path))
+        self.backup_path_label.setText(str(self.context.config.backups_path()))
+        self.reports_path_label.setText(str(self.context.config.reports_path()))
+        self._render_telemetry_detail()
         self._update_storage_summary()

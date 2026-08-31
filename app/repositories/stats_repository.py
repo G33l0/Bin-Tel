@@ -36,8 +36,8 @@ class StatsRepository(BaseRepository):
                 ).scalar()
                 or 0
             )
-            # "Countries" means coverage — the countries BIN records point at —
-            # not the size of the ISO reference table.
+            # "Countries" and "networks" mean coverage — what BIN records
+            # actually point at — not the size of the reference tables.
             covered_countries = int(
                 session.execute(
                     select(func.count(func.distinct(Bin.country_id))).where(
@@ -46,11 +46,19 @@ class StatsRepository(BaseRepository):
                 ).scalar()
                 or 0
             )
+            covered_networks = int(
+                session.execute(
+                    select(func.count(func.distinct(Bin.network_id))).where(
+                        Bin.network_id.is_not(None)
+                    )
+                ).scalar()
+                or 0
+            )
             return DatabaseStats(
                 bins=count(Bin),
                 institutions=count(Institution),
                 countries=covered_countries,
-                networks=count(Network),
+                networks=covered_networks,
                 bin_ranges=count(BinRange),
                 aliases=count(InstitutionAlias),
                 addresses=count(Address),

@@ -55,9 +55,17 @@ class FilterBar(QWidget):
             combo = QComboBox(self)
             combo.setAccessibleName(placeholder)
             combo.setToolTip(f"Filter by {placeholder.removeprefix('All ')}")
-            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContentsOnFirstShow)
+            # Sized from a fixed character budget rather than the longest
+            # option: a country list would otherwise widen the bar far past
+            # the page and force the whole view to scroll sideways.
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(13)
             combo.addItem(placeholder, None)
-            combo.setMinimumWidth(172)
+            combo.setMinimumWidth(148)
+            combo.setMaximumWidth(228)
+            combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             combo.currentIndexChanged.connect(self._emit)
             self._combos[key] = combo
             layout.addWidget(combo)

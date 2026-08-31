@@ -20,18 +20,26 @@ from app.core.context import AppContext
 from app.core.logging_config import get_logger
 from app.ui.dialogs.confirm_dialog import ConfirmDialog
 from app.ui.pages.about_page import AboutPage
+from app.ui.pages.admin_page import DatabaseAdminPage
+from app.ui.pages.analytics_page import AnalyticsPage
 from app.ui.pages.bank_lookup_page import BankLookupPage
 from app.ui.pages.base_page import BasePage
 from app.ui.pages.bin_lookup_page import BinLookupPage
 from app.ui.pages.dashboard_page import DashboardPage
 from app.ui.pages.database_page import DatabasePage
+from app.ui.pages.institution_page import InstitutionIntelligencePage
+from app.ui.pages.license_page import LicensePage
+from app.ui.pages.reports_page import ReportsPage
 from app.ui.pages.settings_page import SettingsPage
 from app.ui.pages.updates_page import UpdatesPage
+from app.ui.pages.watchlists_page import WatchlistsPage
 from app.ui.themes.icons import IconProvider
 from app.ui.themes.theme_manager import ThemeManager
+from app.ui.widgets.command_palette import Command, CommandPalette, PaletteResult, ResultKind
 from app.ui.widgets.header import AppHeader
-from app.ui.widgets.sidebar import Sidebar
+from app.ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from app.ui.widgets.toast import Toast
+from app.workers.base import Worker, run_in_background
 from app.utils.qt_helpers import hbox, shortcut, vbox
 from app.utils.validators import looks_like_bin
 
@@ -95,8 +103,14 @@ class MainWindow(QMainWindow):
             DashboardPage,
             BinLookupPage,
             BankLookupPage,
+            InstitutionIntelligencePage,
+            AnalyticsPage,
+            WatchlistsPage,
+            ReportsPage,
             DatabasePage,
+            DatabaseAdminPage,
             UpdatesPage,
+            LicensePage,
             SettingsPage,
             AboutPage,
         ):
@@ -112,8 +126,24 @@ class MainWindow(QMainWindow):
         settings_page.database_path_changed.connect(self.on_database_changed)
         settings_page.search_settings_changed.connect(self._apply_search_settings)
         settings_page.set_theme_catalogue(self.themes.themes)
+        settings_page.license_changed.connect(self._on_entitlements_changed)
 
         self.updates_page.navigation_requested.connect(self._handle_special_navigation)
+        self.admin_page.navigation_requested.connect(self._handle_special_navigation)
+
+        # -- command palette -------------------------------------------------
+        self.palette = CommandPalette(self)
+        self.palette.set_pages(
+            [(item.key, item.label, item.tooltip) for item in NAV_ITEMS]
+        )
+        self.palette.set_commands(self._build_commands())
+        self.palette.set_result_provider(self._palette_search)
+        self.palette.result_chosen.connect(self._on_palette_result)
+
+        # Entitlements drive navigation badges and page gating.
+        self._entitlement_unsubscribe = context.entitlements.subscribe(
+            self._on_entitlements_changed
+        )
 
         # -- status bar -------------------------------------------------------
         status = QStatusBar(self)
@@ -136,6 +166,10 @@ class MainWindow(QMainWindow):
         self.themes.theme_changed.connect(lambda _: self.on_theme_changed())
         self.refresh_database_status()
 
+        self.sidebar.apply_entitlements(context.entitlements)
+        self.refresh_alert_badges()
+
+        QTimer.singleShot(1200, self._maybe_revalidate_license)
         QTimer.singleShot(1500, self._maybe_check_for_updates)
 
     # -- convenience accessors --------------------------------------------
@@ -155,6 +189,18 @@ class MainWindow(QMainWindow):
     def bank_page(self) -> BankLookupPage:
         return self.pages["bank_lookup"]  # type: ignore[return-value]
 
+    @property
+    def admin_page(self) -> DatabaseAdminPage:
+        return self.pages["admin"]  # type: ignore[return-value]
+
+    @property
+    def license_page(self) -> LicensePage:
+        return self.pages["license"]  # type: ignore[return-value]
+
+    @property
+    def watchlists_page(self) -> WatchlistsPage:
+        return self.pages["watchlists"]  # type: ignore[return-value]
+
     # -- navigation --------------------------------------------------------
     def navigate(self, key: str) -> None:
         """Switch pages. ``bank_lookup:42`` also opens that institution."""
@@ -170,6 +216,10 @@ class MainWindow(QMainWindow):
 
         if target == "bank_lookup" and argument.isdigit():
             self.bank_page.select_institution(int(argument))
+        elif target == "institutions" and argument.isdigit():
+            self.pages["institutions"].select_institution(int(argument))  # type: ignore[attr-defined]
+        elif target == "license" and argument:
+            self.license_page.highlight_feature(argument)
 
     def _handle_special_navigation(self, key: str) -> None:
         if key == "__database_reloaded__":
@@ -184,6 +234,7 @@ class MainWindow(QMainWindow):
             self.navigate("bank_lookup")
             self.bank_page.perform_search(query)
         self.header.search.field.clear()
+        self.refresh_alert_badges()
 
     def focus_search(self) -> None:
         current = self.stack.currentWidget()
@@ -221,6 +272,7 @@ class MainWindow(QMainWindow):
     def on_theme_changed(self) -> None:
         self.header.refresh_theme()
         self.sidebar.refresh_icons()
+        self.palette.refresh_theme()
         self.setWindowIcon(IconProvider.instance().app_icon())
         for page in self.pages.values():
             page.on_theme_changed()
@@ -241,44 +293,212 @@ class MainWindow(QMainWindow):
         Toast.show_message(self, message)
 
     def refresh_database_status(self) -> None:
+        plan = self.context.entitlements.plan.label
         if not self.context.database.is_open:
-            self.database_label.setText("Database: not installed")
+            self.database_label.setText(f"{plan} · Database: not installed")
             return
         info = self.context.stats.info()
         self.database_label.setText(
-            f"Database {info.version or 'unknown'} · {info.stats.bins:,} BINs"
+            f"{plan} · Database {info.version or 'unknown'} · {info.stats.bins:,} BINs"
         )
 
     def on_database_changed(self) -> None:
         self.refresh_database_status()
+        self.refresh_alert_badges()
         for page in self.pages.values():
             page.on_database_changed()
+        unread = self.context.watchlists.unread_count()
+        if unread:
+            self.show_toast(f"{unread} watchlist alert(s) after this update")
 
     # -- updates -----------------------------------------------------------
     def _maybe_check_for_updates(self) -> None:
         """Silent, scheduled check — never blocks and never nags on failure."""
         config = self.context.config
-        if not config.settings.database.automatic_updates:
+        database = config.settings.database
+        if not database.automatic_updates:
             return
-        if not config.is_update_check_due():
+        from app.core.config import UpdateCheckMode
+
+        if database.check_mode is UpdateCheckMode.MANUAL:
+            return
+        due = config.is_update_check_due() or config.should_check_on_startup()
+        if not due:
             return
         logger.info("Running the scheduled update check")
         self.updates_page.check_for_updates(silent=True)
 
+    def _maybe_revalidate_license(self) -> None:
+        """Re-verify the licence when its grace window is running down."""
+        if not self.context.config.settings.license.revalidate_on_startup:
+            return
+        snapshot = self.context.licenses.snapshot
+        if not snapshot.is_activated or not snapshot.needs_revalidation:
+            return
+        worker: Worker = Worker(self.context.licenses.revalidate)
+        worker.signals.result.connect(lambda _: self._on_entitlements_changed())
+        run_in_background(worker)
+
     # -- shortcuts ---------------------------------------------------------
     def _install_shortcuts(self) -> None:
-        shortcut(self, "Ctrl+K", self.focus_search)
+        shortcut(self, "Ctrl+K", self.open_palette)
+        shortcut(self, "Ctrl+P", self.open_palette)
         shortcut(self, "Ctrl+F", self.focus_search)
         shortcut(self, "Ctrl+1", lambda: self.navigate("dashboard"))
         shortcut(self, "Ctrl+2", lambda: self.navigate("bin_lookup"))
         shortcut(self, "Ctrl+3", lambda: self.navigate("bank_lookup"))
-        shortcut(self, "Ctrl+4", lambda: self.navigate("database"))
-        shortcut(self, "Ctrl+5", lambda: self.navigate("updates"))
+        shortcut(self, "Ctrl+4", lambda: self.navigate("institutions"))
+        shortcut(self, "Ctrl+5", lambda: self.navigate("analytics"))
+        shortcut(self, "Ctrl+6", lambda: self.navigate("watchlists"))
+        shortcut(self, "Ctrl+7", lambda: self.navigate("reports"))
+        shortcut(self, "Ctrl+D", lambda: self.navigate("database"))
+        shortcut(self, "Ctrl+U", lambda: self.navigate("updates"))
+        shortcut(self, "Ctrl+L", lambda: self.navigate("license"))
         shortcut(self, "Ctrl+,", lambda: self.navigate("settings"))
         shortcut(self, "Ctrl+B", self.toggle_sidebar)
         shortcut(self, "Ctrl+T", self.cycle_theme)
         shortcut(self, "F5", self._refresh_current)
         shortcut(self, QKeySequence.StandardKey.Quit.name, self.close)
+
+    # -- command palette ----------------------------------------------------
+    def _build_commands(self) -> list[Command]:
+        return [
+            Command("cycle_theme", "Switch theme", "Cycle the Bin-Tel themes", ("appearance", "dark", "light")),
+            Command("toggle_sidebar", "Toggle the sidebar", "Collapse or expand navigation", ("hide",)),
+            Command("check_updates", "Check for database updates", "", ("update", "download")),
+            Command("verify_database", "Verify the database", "", ("integrity", "health", "check")),
+            Command("create_backup", "Create a database backup", "", ("snapshot", "save")),
+            Command("scan_watchlists", "Check watchlists for changes", "", ("alerts", "diff")),
+            Command("new_report", "Build a report", "", ("export", "pdf", "csv")),
+            Command("open_data_folder", "Open the application data folder", "", ("files", "storage")),
+            Command("compare_plans", "Compare plans", "", ("upgrade", "pricing", "licence")),
+        ]
+
+    def open_palette(self) -> None:
+        """Ctrl+K — the global search and command surface."""
+        static: list[PaletteResult] = []
+        for saved in self.context.workspace.saved_searches()[:8]:
+            static.append(
+                PaletteResult(
+                    ResultKind.SAVED_SEARCH,
+                    str(saved.id),
+                    saved.name,
+                    saved.subtitle,
+                    rank=20,
+                )
+            )
+        for term in self.context.workspace.recent_terms(limit=6):
+            static.append(
+                PaletteResult(ResultKind.RECENT, term, term, "Recent search", rank=30)
+            )
+        self.palette.set_static_results(static)
+        self.palette.refresh_theme()
+        self.palette.open_palette()
+
+    def _palette_search(self, term: str) -> None:
+        """Fetch palette suggestions off the GUI thread."""
+        if not self.context.database.is_open:
+            return
+        worker: Worker = Worker(self.context.search.suggest, term, 8)
+        worker.signals.result.connect(self._on_palette_results)
+        run_in_background(worker)
+
+    def _on_palette_results(self, suggestions: list) -> None:
+        results = []
+        for kind, value, label in suggestions:
+            if kind == "bin":
+                results.append(
+                    PaletteResult(ResultKind.BIN, value, label, "Open this BIN record", rank=10)
+                )
+            else:
+                results.append(
+                    PaletteResult(
+                        ResultKind.INSTITUTION, value, label, "Open this institution", rank=12
+                    )
+                )
+        self.palette.set_results(results)
+
+    def _on_palette_result(self, result: PaletteResult) -> None:
+        if result.kind is ResultKind.BIN:
+            self.navigate("bin_lookup")
+            self.bin_page.perform_search(result.value)
+        elif result.kind is ResultKind.INSTITUTION:
+            institution = (
+                self.context.banks.get_by_uid(result.value)
+                if result.value.startswith("inst_")
+                else None
+            )
+            self.navigate("institutions")
+            page = self.pages["institutions"]
+            if institution is not None:
+                page.select_institution(institution.id)  # type: ignore[attr-defined]
+            else:
+                page.perform_search(result.value)  # type: ignore[attr-defined]
+        elif result.kind is ResultKind.RECENT:
+            self._on_global_search(result.value, self.header.suggested_mode())
+        elif result.kind is ResultKind.SAVED_SEARCH:
+            self.navigate("bank_lookup")
+            saved = next(
+                (
+                    item
+                    for item in self.context.workspace.saved_searches()
+                    if str(item.id) == result.value
+                ),
+                None,
+            )
+            if saved is not None and saved.query:
+                self._on_global_search(saved.query, self.header.suggested_mode())
+        elif result.kind is ResultKind.PAGE:
+            self.navigate(result.value)
+        elif result.kind is ResultKind.COMMAND:
+            self._run_command(result.value)
+
+    def _run_command(self, key: str) -> None:
+        actions = {
+            "cycle_theme": self.cycle_theme,
+            "toggle_sidebar": self.toggle_sidebar,
+            "check_updates": lambda: (
+                self.navigate("updates"),
+                self.updates_page.check_for_updates(),
+            ),
+            "verify_database": lambda: (self.navigate("admin"), self.admin_page._verify()),
+            "create_backup": lambda: (
+                self.navigate("admin"),
+                self.admin_page._create_backup(),
+            ),
+            "scan_watchlists": lambda: (
+                self.navigate("watchlists"),
+                self.watchlists_page._scan(),
+            ),
+            "new_report": lambda: self.navigate("reports"),
+            "open_data_folder": self._open_data_folder,
+            "compare_plans": lambda: (self.navigate("license"), self.license_page.show_plans()),
+        }
+        action = actions.get(key)
+        if action is not None:
+            action()
+
+    def _open_data_folder(self) -> None:
+        from app.utils.qt_helpers import reveal_in_file_manager
+
+        reveal_in_file_manager(self.context.paths.data_dir)
+
+    # -- entitlements -------------------------------------------------------
+    def _on_entitlements_changed(self) -> None:
+        """Re-badge navigation and re-gate pages after a plan change."""
+        self.sidebar.apply_entitlements(self.context.entitlements)
+        current = self.stack.currentWidget()
+        if isinstance(current, BasePage):
+            current.refresh()
+        self.refresh_database_status()
+
+    def refresh_alert_badges(self) -> None:
+        """Show unread watchlist alerts on the navigation entry."""
+        try:
+            unread = self.context.watchlists.unread_count()
+        except Exception:  # noqa: BLE001 - a badge must never break the window
+            unread = 0
+        self.sidebar.set_badge_count("watchlists", unread)
 
     def _refresh_current(self) -> None:
         page = self.stack.currentWidget()

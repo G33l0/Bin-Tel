@@ -138,6 +138,11 @@ class IconProvider:
         pixmap.setDevicePixelRatio(2.0)
         return pixmap
 
+    @staticmethod
+    def theme_color(value: str, alpha: int | None = None) -> QColor:
+        """A QColor from a theme token, for widgets that paint their own text."""
+        return color(value, alpha)
+
     def app_icon(self) -> QIcon:
         """The window/taskbar icon, at every size a desktop needs."""
         source = _read_svg(str(get_paths().branding_dir / "bintel-mark.svg"))

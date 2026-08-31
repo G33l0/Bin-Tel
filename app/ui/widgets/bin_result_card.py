@@ -32,6 +32,8 @@ class BinResultCard(QWidget):
     copied = pyqtSignal(str)
     export_requested = pyqtSignal(object)  # BinRecord
     institution_selected = pyqtSignal(int)
+    watch_requested = pyqtSignal(object)  # BinRecord
+    favorite_toggled = pyqtSignal(object)  # BinRecord
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -65,7 +67,15 @@ class BinResultCard(QWidget):
         self.copy_bin_button = self._action("Copy BIN", self._copy_bin)
         self.copy_result_button = self._action("Copy Result", self._copy_result)
         self.export_button = self._action("Export Result…", self._export, primary=True)
-        for button in (self.copy_bin_button, self.copy_result_button, self.export_button):
+        self.watch_button = self._action("Add to watchlist", self._watch)
+        self.favorite_button = self._action("Add to favourites", self._favorite)
+        for button in (
+            self.copy_bin_button,
+            self.copy_result_button,
+            self.export_button,
+            self.watch_button,
+            self.favorite_button,
+        ):
             actions.addWidget(button)
         header_row.addLayout(actions)
         self.headline.body.addLayout(header_row)
@@ -228,3 +238,19 @@ class BinResultCard(QWidget):
     def _export(self) -> None:
         if self._record:
             self.export_requested.emit(self._record)
+
+    def _watch(self) -> None:
+        if self._record:
+            self.watch_requested.emit(self._record)
+
+    def _favorite(self) -> None:
+        if self._record:
+            self.favorite_toggled.emit(self._record)
+
+    def set_watch_state(self, watched: bool) -> None:
+        self.watch_button.setText("On a watchlist" if watched else "Add to watchlist")
+
+    def set_favorite_state(self, favorite: bool) -> None:
+        self.favorite_button.setText(
+            "Remove from favourites" if favorite else "Add to favourites"
+        )
