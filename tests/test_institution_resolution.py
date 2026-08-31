@@ -298,3 +298,90 @@ def test_the_same_institution_twice_is_not_a_conflict():
     outcome = conflict_resolver.resolve([_claim(1, "A"), _claim(1, "A")])
     assert outcome.resolution is Resolution.SAME_INSTITUTION
     assert outcome.is_resolved
+
+
+# -- deduplication on identity keys -------------------------------------------
+
+
+def test_bin_duplicates_are_counted_on_prefix_and_length(scenario_manager):
+    """``410000`` and ``41000012`` are two allocations, not one duplicated."""
+    from app.services.dedupe_service import DedupeService
+
+    with scenario_manager.session() as session:
+        report = DedupeService(session, dry_run=True).run(merge=False)
+    assert report.duplicate_bins == 0
+
+
+def test_two_issuers_claiming_one_span_is_recorded_as_a_conflict(scenario_manager):
+    from sqlalchemy import select
+
+    from app.models.entities import BinRange, Conflict
+    from app.services.dedupe_service import DedupeService
+
+    with scenario_manager.transaction() as session:
+        original = session.execute(select(BinRange)).scalars().first()
+        assert original is not None
+        rival = 1 if original.institution_id != 1 else 2
+        session.add(
+            BinRange(
+                range_low=original.range_low,
+                range_high=original.range_high,
+                range_low_int=original.range_low_int,
+                range_high_int=original.range_high_int,
+                width=original.width,
+                range_type=original.range_type,
+                span=original.span,
+                institution_id=rival,
+                confidence=0.9,
+            )
+        )
+
+    with scenario_manager.transaction() as session:
+        report = DedupeService(session).run()
+    assert report.range_conflicts_recorded == 1
+
+    with scenario_manager.session() as session:
+        conflicts = (
+            session.execute(
+                select(Conflict).where(Conflict.entity_type == "bin_range")
+            )
+            .scalars()
+            .all()
+        )
+        ranges = session.execute(select(BinRange)).scalars().all()
+    assert len(conflicts) == 1
+    assert len(ranges) == 3, "both claims are kept; nothing is deleted"
+
+
+def test_recording_the_same_conflict_twice_does_not_duplicate_it(scenario_manager):
+    from sqlalchemy import func, select
+
+    from app.models.entities import Conflict
+    from app.services.dedupe_service import DedupeService
+
+    with scenario_manager.transaction() as session:
+        service = DedupeService(session)
+        assert service._record_conflict(
+            entity_type="bin_range",
+            entity_key="1-2",
+            field="institution",
+            value_a="A",
+            value_b="B",
+        )
+        assert not service._record_conflict(
+            entity_type="bin_range",
+            entity_key="1-2",
+            field="institution",
+            value_a="A",
+            value_b="B",
+        )
+
+    with scenario_manager.session() as session:
+        assert (
+            session.execute(
+                select(func.count())
+                .select_from(Conflict)
+                .where(Conflict.entity_key == "1-2")
+            ).scalar()
+            == 1
+        )
