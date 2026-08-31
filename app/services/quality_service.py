@@ -47,6 +47,10 @@ class QualityMetric:
     denominator: int
     #: What a *good* value looks like, so a reader knows which way is up.
     higher_is_better: bool = True
+    #: Whether the figure describes composition rather than quality. The split
+    #: between six- and eight-digit assignments is a fact about the data, not a
+    #: score, and presenting it as one would invent a problem.
+    neutral: bool = False
     description: str = ""
 
     @property
@@ -210,6 +214,7 @@ class DataQualityService:
                 label="8-digit coverage",
                 numerator=extended,
                 denominator=bins,
+                neutral=True,
                 description="Assignments recorded at eight digits",
             ),
             QualityMetric(
@@ -217,6 +222,7 @@ class DataQualityService:
                 label="6-digit legacy coverage",
                 numerator=roots,
                 denominator=bins,
+                neutral=True,
                 description="Assignments recorded at six digits",
             ),
             QualityMetric(
@@ -242,9 +248,10 @@ class DataQualityService:
             ),
             QualityMetric(
                 key="range_coverage",
-                label="Range coverage",
+                label="Account-range share",
                 numerator=account_ranges,
                 denominator=ranges,
+                neutral=True,
                 description="Allocated ranges that are account ranges",
             ),
             QualityMetric(
