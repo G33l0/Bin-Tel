@@ -143,3 +143,26 @@ def test_a_suggested_filename_is_safe(reports):
     assert name.endswith(".csv")
     for character in '/\\:"*?<>|':
         assert character not in name
+
+
+def test_a_report_distinguishes_length_and_standing(reports, rows):
+    """A report that cannot tell a root from an extended assignment, or a
+    current issuer from a former one, is not describing the data."""
+    content = reports.build_search_report(None, rows, title="Portfolio")
+    assert "Length" in content.table_columns
+    assert "Standing" in content.table_columns
+
+
+def test_an_export_carries_the_relationship_in_readable_form(manager):
+    from app.models.schemas import AdvancedQuery, PageRequest
+    from app.repositories.search_repository import SearchRepository
+    from app.services.export_service import ExportFormat, ExportService
+
+    page = SearchRepository(manager).search(AdvancedQuery(), PageRequest(page_size=5))
+    payload = ExportService().render_rows(list(page.items), ExportFormat.CSV)
+    header = payload.splitlines()[0]
+    assert "BIN Length" in header
+    assert "Relationship" in header
+    assert "Standing" in header
+    # Readable, not the stored enum value.
+    assert "former_issuer" not in payload

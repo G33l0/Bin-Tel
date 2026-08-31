@@ -53,11 +53,14 @@ class ExportFormat(StrEnum):
 #: Column order for tabular exports of a bank result.
 ROW_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bin", "BIN"),
+    ("length", "BIN Length"),
     ("network", "Network"),
     ("brand", "Card Brand"),
     ("card_type", "Card Type"),
     ("funding_type", "Funding"),
     ("institution", "Issuer"),
+    ("relationship_type", "Relationship"),
+    ("standing", "Standing"),
     ("country", "Country"),
     ("country_code", "ISO Country Code"),
     ("region", "State / Province"),

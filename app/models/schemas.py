@@ -371,11 +371,25 @@ class BinRow(_DTO):
     def standing(self) -> str:
         return "Current" if self.is_current else "Historical"
 
+    @property
+    def relationship_label(self) -> str:
+        """``Former issuer`` rather than ``former_issuer``."""
+        from app.models.entities import RelationshipType
+
+        if not self.relationship_type:
+            return UNKNOWN_DISPLAY
+        try:
+            return RelationshipType(self.relationship_type).label
+        except ValueError:
+            return self.relationship_type.replace("_", " ").capitalize()
+
     def cell(self, key: str) -> str:
         if key == "length":
             return self.length_label
         if key == "standing":
             return self.standing
+        if key == "relationship_type":
+            return self.relationship_label
         return display(getattr(self, key, None))
 
 
