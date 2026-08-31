@@ -61,6 +61,48 @@ SORTABLE_COLUMNS: dict[str, Any] = {
 }
 
 
+def row_columns(primary_link: Any) -> tuple[Any, ...]:
+    """The labelled columns every BIN-table projection selects.
+
+    Shared by :class:`BinRepository` and the advanced-search repository so the
+    two cannot drift apart. Labels — not positions — are the contract.
+    """
+    return (
+        Bin.id.label("id"),
+        Bin.bin.label("bin"),
+        Network.display_name.label("network"),
+        Bin.brand.label("brand"),
+        Bin.card_type.label("card_type"),
+        Bin.funding_type.label("funding_type"),
+        Country.name.label("country"),
+        Country.iso2.label("country_code"),
+        Address.region.label("region"),
+        Address.city.label("city"),
+        Address.postal_code.label("postal_code"),
+        Institution.display_name.label("institution"),
+        Bin.status.label("status"),
+        Bin.prefix_length.label("prefix_length"),
+        Bin.prefix_type.label("prefix_type"),
+        primary_link.c.is_current.label("is_current"),
+        primary_link.c.relationship_type.label("relationship_type"),
+    )
+
+
+def primary_link_subquery() -> Any:
+    """The per-BIN primary relationship, with its standing and kind."""
+    return (
+        select(
+            BinInstitution.bin_id,
+            func.min(BinInstitution.institution_id).label("inst_id"),
+            func.max(BinInstitution.is_current).label("is_current"),
+            func.min(BinInstitution.relationship_type).label("relationship_type"),
+        )
+        .where(BinInstitution.is_primary.is_(True))
+        .group_by(BinInstitution.bin_id)
+        .subquery()
+    )
+
+
 class BinRepository(BaseRepository):
     """Read access to ``bins``, ``bin_ranges`` and their relationships."""
 
@@ -279,20 +321,75 @@ class BinRepository(BaseRepository):
 
     def all_bins_for_institution(self, institution_id: int, limit: int = 100_000) -> list[BinRow]:
         """Every BIN for an institution — used by CSV/JSON export only."""
+        return self.all_bins_for_institutions([institution_id], limit=limit)
+
+    # -- multi-institution scope ------------------------------------------
+    #
+    # A portfolio spans an institution *and* the related institutions whose
+    # BINs belong to it — subsidiaries, predecessors, brands. These take a list
+    # so the caller can hand over the whole set in one query rather than
+    # issuing one per institution and stitching the pages together.
+
+    def page_for_institutions(
+        self,
+        institution_ids: Sequence[int],
+        request: PageRequest,
+        filters: BinFilters | None = None,
+    ) -> Page[BinRow]:
+        """One page of the BINs belonging to any of *institution_ids*."""
+        filters = filters or BinFilters()
+        if not institution_ids:
+            return Page(items=[], total=0, page=request.page, page_size=request.page_size)
+        with self.session() as session:
+            statement = self._row_statement(filters).where(
+                self._scope(institution_ids, filters)
+            )
+            statement = self._apply_sort(statement, request)
+            total = self.count_of(session, statement)
+            rows = session.execute(
+                statement.limit(request.page_size).offset(request.offset)
+            ).all()
+            return Page(
+                items=[self._to_row(row) for row in rows],
+                total=total,
+                page=request.page,
+                page_size=request.page_size,
+            )
+
+    def all_bins_for_institutions(
+        self,
+        institution_ids: Sequence[int],
+        filters: BinFilters | None = None,
+        *,
+        limit: int = 100_000,
+    ) -> list[BinRow]:
+        """Every BIN belonging to any of *institution_ids*, for export."""
+        if not institution_ids:
+            return []
         with self.session() as session:
             statement = (
-                self._row_statement(BinFilters())
-                .where(
-                    Bin.id.in_(
-                        select(BinInstitution.bin_id).where(
-                            BinInstitution.institution_id == institution_id
-                        )
-                    )
-                )
+                self._row_statement(filters or BinFilters())
+                .where(self._scope(institution_ids, filters or BinFilters()))
                 .order_by(Bin.bin.asc())
                 .limit(limit)
             )
             return [self._to_row(row) for row in session.execute(statement).all()]
+
+    @staticmethod
+    def _scope(institution_ids: Sequence[int], filters: BinFilters) -> Any:
+        """Restrict to BINs linked to any of the institutions.
+
+        The link's own currency is filtered here rather than on the row's
+        primary link, because a BIN can be current for one institution and
+        historical for another — asking for the historical view of a
+        predecessor should find it.
+        """
+        link = select(BinInstitution.bin_id).where(
+            BinInstitution.institution_id.in_(list(institution_ids))
+        )
+        if filters.is_current is not None:
+            link = link.where(BinInstitution.is_current.is_(filters.is_current))
+        return Bin.id.in_(link)
 
     def filter_options(self, institution_id: int | None = None) -> dict[str, list[tuple[str, str]]]:
         """Distinct filter values (code, label) for the table filter bar."""
@@ -425,12 +522,7 @@ class BinRepository(BaseRepository):
     @staticmethod
     def _row_statement(filters: BinFilters) -> Select[Any]:
         """Flat projection for table rows — no ORM objects, no lazy loads."""
-        primary_link = (
-            select(BinInstitution.bin_id, func.min(BinInstitution.institution_id).label("inst_id"))
-            .where(BinInstitution.is_primary.is_(True))
-            .group_by(BinInstitution.bin_id)
-            .subquery()
-        )
+        primary_link = primary_link_subquery()
         primary_address = (
             select(
                 Address.institution_id.label("inst_id"),
@@ -440,21 +532,7 @@ class BinRepository(BaseRepository):
             .subquery()
         )
         statement = (
-            select(
-                Bin.id,
-                Bin.bin,
-                Network.display_name,
-                Bin.brand,
-                Bin.card_type,
-                Bin.funding_type,
-                Country.name,
-                Country.iso2,
-                Address.region,
-                Address.city,
-                Address.postal_code,
-                Institution.display_name,
-                Bin.status,
-            )
+            select(*row_columns(primary_link))
             .select_from(Bin)
             .outerjoin(Network, Bin.network_id == Network.id)
             .outerjoin(Country, Bin.country_id == Country.id)
@@ -473,6 +551,17 @@ class BinRepository(BaseRepository):
             statement = statement.where(Bin.funding_type == filters.funding_type)
         if filters.region:
             statement = statement.where(Address.region == filters.region)
+        if filters.prefix_length:
+            statement = statement.where(Bin.prefix_length == filters.prefix_length)
+        if filters.is_current is not None:
+            statement = statement.where(
+                primary_link.c.is_current.is_(True)
+                if filters.is_current
+                else or_(
+                    primary_link.c.is_current.is_(False),
+                    primary_link.c.is_current.is_(None),
+                )
+            )
         if filters.text:
             needle = f"%{filters.text.strip()}%"
             statement = statement.where(
@@ -662,20 +751,34 @@ class BinRepository(BaseRepository):
 
     @staticmethod
     def _to_row(row: Any) -> BinRow:
+        """Build a table row from a labelled projection.
+
+        Read by name rather than by position: two query builders share this
+        projection, and positional access silently mismatches the moment one
+        of them gains a column.
+        """
+        data = row._mapping
+        value = data["bin"]
+        length = data.get("prefix_length")
+        is_current = data.get("is_current")
         return BinRow(
-            id=row[0],
-            bin=row[1],
-            network=row[2],
-            brand=row[3],
-            card_type=_label(row[4]),
-            funding_type=_label(row[5]),
-            country=row[6],
-            country_code=row[7],
-            region=row[8],
-            city=row[9],
-            postal_code=row[10],
-            institution=row[11],
-            status=_label(row[12]),
+            id=data["id"],
+            bin=value,
+            network=data.get("network"),
+            brand=data.get("brand"),
+            card_type=_label(data.get("card_type")),
+            funding_type=_label(data.get("funding_type")),
+            country=data.get("country"),
+            country_code=data.get("country_code"),
+            region=data.get("region"),
+            city=data.get("city"),
+            postal_code=data.get("postal_code"),
+            institution=data.get("institution"),
+            status=_label(data.get("status")),
+            prefix_length=length or len(value),
+            prefix_type=data.get("prefix_type"),
+            is_current=True if is_current is None else bool(is_current),
+            relationship_type=data.get("relationship_type"),
         )
 
 

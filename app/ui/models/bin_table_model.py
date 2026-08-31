@@ -28,6 +28,10 @@ class Column:
 
 COLUMNS: tuple[Column, ...] = (
     Column("bin", "BIN", 108, monospace=True),
+    # Length and standing are shown by default, because "which BIN is this and
+    # does it still apply" is the reader's first question about a portfolio row.
+    Column("length", "Length", 88, sortable=False),
+    Column("standing", "Standing", 100, sortable=False),
     Column("network", "Network", 122),
     Column("brand", "Card Brand", 150, sortable=False, optional=True),
     Column("card_type", "Card Type", 108),

@@ -45,6 +45,21 @@ class FilterBar(QWidget):
         ("region", "All regions"),
     )
 
+    #: Filters whose options are fixed rather than read from the database:
+    #: ``(key, placeholder, [(label, value), ...])``.
+    _FIXED_FIELDS = (
+        (
+            "standing",
+            "Current & historical",
+            (("Current only", True), ("Historical only", False)),
+        ),
+        (
+            "length",
+            "Any BIN length",
+            (("6-digit", 6), ("8-digit", 8)),
+        ),
+    )
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         layout = hbox(self, spacing=8)
@@ -63,6 +78,28 @@ class FilterBar(QWidget):
             )
             combo.setMinimumContentsLength(13)
             combo.addItem(placeholder, None)
+            combo.setMinimumWidth(148)
+            combo.setMaximumWidth(228)
+            combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            combo.currentIndexChanged.connect(self._emit)
+            self._combos[key] = combo
+            layout.addWidget(combo)
+
+        # Standing and length are not data-derived, so their options are
+        # known up front. Standing defaults to "both": a BIN an issuer used to
+        # hold is part of its record, and hiding it by default would quietly
+        # under-report the portfolio.
+        for key, placeholder, options in self._FIXED_FIELDS:
+            combo = QComboBox(self)
+            combo.setAccessibleName(placeholder)
+            combo.setToolTip(f"Filter by {placeholder.lower()}")
+            combo.setSizeAdjustPolicy(
+                QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+            )
+            combo.setMinimumContentsLength(13)
+            combo.addItem(placeholder, None)
+            for label, value in options:
+                combo.addItem(label, value)
             combo.setMinimumWidth(148)
             combo.setMaximumWidth(228)
             combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -99,6 +136,8 @@ class FilterBar(QWidget):
             card_type=self._combos["card_type"].currentData(),
             funding_type=self._combos["funding_type"].currentData(),
             region=self._combos["region"].currentData(),
+            is_current=self._combos["standing"].currentData(),
+            prefix_length=self._combos["length"].currentData(),
         )
 
     def clear(self) -> None:

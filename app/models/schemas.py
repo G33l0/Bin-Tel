@@ -304,6 +304,9 @@ class BinRecord(_DTO):
         pairs: list[tuple[str, str]] = [
             ("BIN", display(self.bin)),
             ("IIN", display(self.iin or self.bin)),
+            # The assigned length, which is what distinguishes a six-digit root
+            # from an eight-digit assignment beneath it.
+            ("BIN Length", self.bin_length_label),
             ("IIN Length", display(self.iin_length)),
             ("BIN Range", display(self.bin_range)),
             ("Network", self.network.label if self.network else UNKNOWN_DISPLAY),
@@ -348,8 +351,31 @@ class BinRow(_DTO):
     postal_code: str | None = None
     institution: str | None = None
     status: str | None = None
+    #: The assigned length, so a table can distinguish a six-digit root from
+    #: an eight-digit assignment rather than showing them as the same kind of
+    #: thing.
+    prefix_length: int | None = None
+    prefix_type: str | None = None
+    #: Whether the relationship that puts this BIN in this table is current.
+    is_current: bool = True
+    relationship_type: str | None = None
+    #: Set when the row came from a range rather than a discrete assignment.
+    bin_range: str | None = None
+
+    @property
+    def length_label(self) -> str:
+        length = self.prefix_length or len(self.bin)
+        return f"{length}-digit"
+
+    @property
+    def standing(self) -> str:
+        return "Current" if self.is_current else "Historical"
 
     def cell(self, key: str) -> str:
+        if key == "length":
+            return self.length_label
+        if key == "standing":
+            return self.standing
         return display(getattr(self, key, None))
 
 
@@ -374,11 +400,17 @@ class BinFilters(BaseModel):
     funding_type: str | None = None
     region: str | None = None
     text: str | None = None
+    #: ``None`` shows current and historical together, which is the honest
+    #: default for a portfolio view: a BIN an issuer used to hold is part of
+    #: its history, and hiding it silently would misrepresent the record.
+    is_current: bool | None = None
+    #: Restrict to a prefix length — 6 for roots, 8 for extended assignments.
+    prefix_length: int | None = None
 
     @property
     def is_active(self) -> bool:
         return any(
-            value
+            value is not None and value != ""
             for value in (
                 self.country_code,
                 self.network_code,
@@ -386,6 +418,8 @@ class BinFilters(BaseModel):
                 self.funding_type,
                 self.region,
                 self.text,
+                self.is_current,
+                self.prefix_length,
             )
         )
 

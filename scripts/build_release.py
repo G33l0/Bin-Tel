@@ -62,6 +62,7 @@ from app.importers.registry import importer_for  # noqa: E402
 from app.models.entities import DatabaseMetadata, DatabaseVersion  # noqa: E402
 from app.providers.compression import compress, normalise, suffix_for  # noqa: E402
 from app.services.dedupe_service import DedupeService  # noqa: E402
+from app.services.quality_service import DataQualityService  # noqa: E402
 from app.utils.hashing import file_checksum  # noqa: E402
 
 STEP_WIDTH = 34
@@ -100,7 +101,7 @@ def build_release(
 ) -> tuple[Path, Path]:
     """Run the whole pipeline. Returns ``(artefact, manifest)``."""
     started = time.monotonic()
-    total = 9
+    total = 10
 
     staging_dir = output_dir.parent / f".{output_dir.name}-staging"
     if staging_dir.exists():
@@ -206,10 +207,27 @@ def build_release(
             )
         done(f"{verification.integrity_result}, schema {verification.schema_version}")
 
+        # -- 6b. measure quality --------------------------------------------
+        # Counted here and stored in the package, so every client reads the
+        # same figures rather than each recounting and possibly disagreeing.
+        step(7, total, "Measuring quality")
+        measuring = DatabaseManager(staged)
+        measuring.open()
+        try:
+            quality = DataQualityService(measuring)
+            quality_report = quality.evaluate(database_version=version)
+            quality.store(quality_report)
+        finally:
+            measuring.close()
+        resolution = quality_report.get("institution_resolution")
+        done(
+            f"resolution {resolution.display}" if resolution else "measured"
+        )
+
         # -- 7. compress ----------------------------------------------------
         database_size = staged.stat().st_size
         compression = normalise(compression)
-        step(7, total, "Compressing")
+        step(8, total, "Compressing")
         if compression == "none":
             artefact_staged = staged
             done("skipped (uncompressed release)")
@@ -220,12 +238,12 @@ def build_release(
             done(f"{compression}, {_size(artefact_staged.stat().st_size)} ({saved:.0%} saved)")
 
         # -- 8. checksum ----------------------------------------------------
-        step(8, total, "Checksumming")
+        step(9, total, "Checksumming")
         digest = file_checksum(artefact_staged, "sha256")
         done(f"sha256:{digest[:16]}…")
 
         # -- 9. publish -----------------------------------------------------
-        step(9, total, "Writing the release")
+        step(10, total, "Writing the release")
         output_dir.mkdir(parents=True, exist_ok=True)
         artefact = output_dir / artefact_staged.name
         shutil.copy2(artefact_staged, artefact)
@@ -255,7 +273,9 @@ def build_release(
         manifest_path = output_dir / "database-manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-        _write_release_notes(output_dir, version, counts, report, verification, notes)
+        _write_release_notes(
+            output_dir, version, counts, report, verification, quality_report, notes
+        )
         done(str(output_dir))
     finally:
         if not keep_staging and staging_dir.exists():
@@ -301,6 +321,7 @@ def _write_release_notes(
     counts: dict[str, int],
     dedupe_report: Any,
     verification: Any,
+    quality: Any,
     notes: str,
 ) -> None:
     """A human-readable summary beside the artefacts, for the release record."""
@@ -324,6 +345,13 @@ def _write_release_notes(
         f"- Integrity check: {verification.integrity_result}",
         f"- Deduplication: {dedupe_report.summary}",
         f"- Open conflicts carried: {counts['conflicts']:,}",
+        "",
+        "## Measured quality",
+        "",
+        *(
+            f"- {metric.label}: {metric.display} ({metric.detail})"
+            for metric in quality.measured
+        ),
     ]
     if notes:
         lines += ["", "## Notes", "", notes]

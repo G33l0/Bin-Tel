@@ -33,7 +33,11 @@ from app.normalizers.bin_normalizer import bin_normalizer
 from app.normalizers.confidence import string_similarity
 from app.normalizers.name_normalizer import name_normalizer
 from app.repositories.base import BaseRepository
-from app.repositories.bin_repository import BinRepository
+from app.repositories.bin_repository import (
+    BinRepository,
+    primary_link_subquery,
+    row_columns,
+)
 from app.utils.validators import clean_digits
 
 #: Columns the advanced result table may sort by.
@@ -193,12 +197,7 @@ class SearchRepository(BaseRepository):
 
     # -- statement construction -------------------------------------------
     def _build(self, query: AdvancedQuery, session: Any) -> Select[Any]:
-        primary_link = (
-            select(BinInstitution.bin_id, func.min(BinInstitution.institution_id).label("inst_id"))
-            .where(BinInstitution.is_primary.is_(True))
-            .group_by(BinInstitution.bin_id)
-            .subquery()
-        )
+        primary_link = primary_link_subquery()
         primary_address = (
             select(
                 Address.institution_id.label("inst_id"),
@@ -208,21 +207,7 @@ class SearchRepository(BaseRepository):
             .subquery()
         )
         statement = (
-            select(
-                Bin.id,
-                Bin.bin,
-                Network.display_name,
-                Bin.brand,
-                Bin.card_type,
-                Bin.funding_type,
-                Country.name,
-                Country.iso2,
-                Address.region,
-                Address.city,
-                Address.postal_code,
-                Institution.display_name,
-                Bin.status,
-            )
+            select(*row_columns(primary_link))
             .select_from(Bin)
             .outerjoin(Network, Bin.network_id == Network.id)
             .outerjoin(Country, Bin.country_id == Country.id)
