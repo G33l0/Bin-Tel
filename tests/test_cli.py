@@ -173,3 +173,65 @@ def test_an_unknown_command_is_a_usage_error():
     with pytest.raises(SystemExit) as excinfo:
         main(["not-a-command"])
     assert excinfo.value.code != 0
+
+
+# -- the lookup engine through the CLI ----------------------------------------
+
+
+def test_lookup_reports_the_match_and_confidence(capsys, scenario_database, tmp_path):
+    import shutil
+
+    database = tmp_path / "scenarios.sqlite"
+    shutil.copy2(scenario_database, database)
+
+    code, out = run(capsys, "lookup", "41000012", "--database", str(database))
+    assert code == EXIT_OK
+    assert "Exact 8-digit" in out
+    assert "Confidence: Verified" in out
+    assert "Northshore Credit Union" in out
+
+
+def test_lookup_reports_a_conflict(capsys, scenario_database, tmp_path):
+    import shutil
+
+    database = tmp_path / "scenarios.sqlite"
+    shutil.copy2(scenario_database, database)
+
+    code, out = run(capsys, "lookup", "520001", "--database", str(database))
+    assert code == EXIT_OK
+    assert "Conflicted" in out
+    assert "Both readings are kept" in out
+
+
+def test_lookup_says_when_nothing_is_resolved(capsys, scenario_database, tmp_path):
+    import shutil
+
+    database = tmp_path / "scenarios.sqlite"
+    shutil.copy2(scenario_database, database)
+
+    code, out = run(capsys, "lookup", "600001", "--database", str(database))
+    assert code == EXIT_OK
+    assert "No institution relationship is recorded" in out
+    assert "Unknown" in out
+
+
+def test_quality_prints_measured_metrics(capsys, database_path):
+    code, out = run(capsys, "quality", "--json", "--database", str(database_path))
+    assert code == EXIT_OK
+    payload = json.loads(out)
+    keys = {metric["key"] for metric in payload["metrics"]}
+    assert {"institution_resolution", "extended_coverage", "duplicate_rate"} <= keys
+    for metric in payload["metrics"]:
+        assert metric["numerator"] <= metric["denominator"] or metric["denominator"] == 0
+
+
+def test_quality_can_store_its_metrics(capsys, database_path):
+    code, out = run(capsys, "quality", "--store", "--database", str(database_path))
+    assert code == EXIT_OK
+    assert "Stored" in out
+
+
+def test_staging_reports_nothing_when_empty(capsys, database_path):
+    code, out = run(capsys, "staging", "--database", str(database_path))
+    assert code == EXIT_OK
+    assert "Nothing is staged" in out

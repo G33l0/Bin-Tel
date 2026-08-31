@@ -118,6 +118,8 @@ python -m app.cli stats --json
 python -m app.cli lookup 414720
 python -m app.cli export --bin 414720 --format json --output record.json
 python -m app.cli dedupe --detect-only
+python -m app.cli quality --json
+python -m app.cli staging --batch <id>
 python -m app.cli reindex
 python -m app.cli backup --output ./backups --keep 5
 python -m app.cli restore ./backups/bintel-2026.01.1.sqlite

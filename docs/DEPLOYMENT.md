@@ -86,10 +86,12 @@ What it does, step by step:
 4. **Stamp** — writes `database_metadata` and a `database_versions` row
 5. **Index and compact** — rebuilds every index, runs `ANALYZE`, then `VACUUM`
 6. **Verify** — full integrity check; **a failure here stops the build**
-7. **Compress** — xz by default, typically 85–90% smaller on the wire
-8. **Checksum** — SHA-256 of the artefact that is actually transferred
-9. **Publish** — copies the artefact, writes `database-manifest.json` and a
-   human-readable `RELEASE.md`
+7. **Measure quality** — the twelve metrics, counted and stored in the package,
+   so every client reads the same figures instead of each recounting
+8. **Compress** — xz by default, typically 85–90% smaller on the wire
+9. **Checksum** — SHA-256 of the artefact that is actually transferred
+10. **Publish** — copies the artefact, writes `database-manifest.json` and a
+    human-readable `RELEASE.md` carrying the measured figures
 
 Output:
 
@@ -172,6 +174,9 @@ the same client code. See [MONETIZATION.md](MONETIZATION.md).
 
 - [ ] Source data reviewed — issuer metadata only
 - [ ] `build_release.py` completed with no failed step
+- [ ] `RELEASE.md` quality figures reviewed — resolution rate, 8-digit
+      coverage, duplicate and conflict rates
+- [ ] `python -m app.cli staging` shows nothing unexpectedly held back
 - [ ] `RELEASE.md` counts look right against the previous release
 - [ ] Installed over the previous version in a scratch profile
 - [ ] Watchlist change detection produced sensible alerts against it

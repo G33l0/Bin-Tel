@@ -27,7 +27,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.core.constants import SCHEMA_VERSION  # noqa: E402
 from app.database.engine import DatabaseManager  # noqa: E402
 from app.database.schema import analyze, create_schema, write_metadata  # noqa: E402
-from app.models.entities import DatabaseMetadata, DatabaseVersion  # noqa: E402
+from app.models.entities import (  # noqa: E402
+    DatabaseMetadata,
+    DatabaseVersion,
+    RangeType,
+)
 from app.services.ingest_service import IngestService, RawBinRecord  # noqa: E402
 from app.providers.compression import compress, normalise, suffix_for  # noqa: E402
 from app.utils.hashing import file_checksum  # noqa: E402
@@ -128,14 +132,38 @@ def build(
         )
         ingest.seed_reference_data()
 
+        # Roots that will carry eight-digit assignments beneath them, so a
+        # generated package exercises the length-aware path rather than
+        # implying every allocation is six digits.
+        shared_roots: list[str] = []
+
         while written < bin_count:
             issuer = ISSUERS[rng.randrange(len(ISSUERS))]
             display, legal, country, state, city, postal, website = issuer
             network, prefix = NETWORK_PREFIXES[rng.randrange(len(NETWORK_PREFIXES))]
-            digits = prefix + "".join(str(rng.randrange(10)) for _ in range(6 - len(prefix)))
+
+            # Roughly a fifth of the package is eight-digit, matching the
+            # direction of real issuance. Where a root already exists, the
+            # eight-digit assignment is placed beneath it and given to a
+            # *different* issuer — which is exactly the case a lookup has to
+            # get right.
+            extend_existing = shared_roots and rng.random() < 0.12
+            if extend_existing:
+                root = shared_roots[rng.randrange(len(shared_roots))]
+                digits = root + f"{rng.randrange(100):02d}"
+            elif rng.random() < 0.10:
+                digits = prefix + "".join(
+                    str(rng.randrange(10)) for _ in range(8 - len(prefix))
+                )
+            else:
+                digits = prefix + "".join(
+                    str(rng.randrange(10)) for _ in range(6 - len(prefix))
+                )
             if digits in seen:
                 continue
             seen.add(digits)
+            if len(digits) == 6 and len(shared_roots) < 40 and rng.random() < 0.08:
+                shared_roots.append(digits)
 
             card_type = CARD_TYPES[rng.randrange(len(CARD_TYPES))]
             commercial = rng.random() < 0.18
@@ -175,8 +203,10 @@ def build(
                 session.flush()
                 print(f"  … {written:,}/{bin_count:,} BINs", flush=True)
 
-        # A handful of allocated ranges, so range lookups have something to hit.
-        for _ in range(min(40, max(4, bin_count // 100))):
+        # Allocated ranges, so range lookups have something to hit. Every
+        # third one is a narrower account range inside the issuer range that
+        # precedes it, which is what specificity ranking has to resolve.
+        for index in range(min(40, max(4, bin_count // 100))):
             issuer = ISSUERS[rng.randrange(len(ISSUERS))]
             network, prefix = NETWORK_PREFIXES[rng.randrange(len(NETWORK_PREFIXES))]
             low = prefix + "".join(str(rng.randrange(10)) for _ in range(5 - len(prefix)))
@@ -194,8 +224,30 @@ def build(
                     postal_code=issuer[5],
                     status="active",
                     confidence=0.9,
+                    range_type=RangeType.ISSUER_RANGE.value,
                 )
             )
+            if index % 3 == 0:
+                narrower = ISSUERS[rng.randrange(len(ISSUERS))]
+                ingest.ingest(
+                    RawBinRecord(
+                        # Eight digits, nested inside the six-digit issuer
+                        # range above: a real account range is narrower than
+                        # the allocation it sits in, not a different length of
+                        # the same thing.
+                        bin=low + "040",
+                        bin_high=low + "049",
+                        network=network,
+                        card_type="credit",
+                        issuer=narrower[0],
+                        issuer_legal_name=narrower[1],
+                        country=narrower[2],
+                        city=narrower[4],
+                        status="active",
+                        confidence=0.95,
+                        range_type=RangeType.ACCOUNT_RANGE.value,
+                    )
+                )
 
         session.add(
             DatabaseVersion(

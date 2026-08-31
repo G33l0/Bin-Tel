@@ -194,3 +194,36 @@ def test_the_result_card_never_offers_a_sources_or_notes_section():
     }
     for forbidden in ("sources", "data sources", "notes", "source"):
         assert forbidden not in labels
+
+
+# -- Luhn is a format check, never an issuer signal ---------------------------
+
+
+def test_luhn_is_available_as_a_format_check_only():
+    from app.utils.validators import luhn_check_digit, passes_luhn
+
+    # An invented number that satisfies the check digit.
+    assert passes_luhn("4111111111111111")
+    assert not passes_luhn("4111111111111112")
+    assert luhn_check_digit("411111111111111") == 1
+
+
+@pytest.mark.parametrize("value", ["", "x", "1"])
+def test_luhn_declines_unusable_input(value):
+    from app.utils.validators import passes_luhn
+
+    assert not passes_luhn(value)
+
+
+def test_luhn_plays_no_part_in_issuer_resolution():
+    """A check digit says nothing about who issued a card."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    offenders = [
+        str(path.relative_to(root))
+        for path in root.rglob("*.py")
+        if "luhn" in path.read_text(encoding="utf-8").lower()
+        and path.name != "validators.py"
+    ]
+    assert offenders == [], "Luhn must stay out of the lookup path"
