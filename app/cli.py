@@ -19,12 +19,13 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 if __package__ in (None, ""):  # pragma: no cover - direct-script execution
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import ConfigManager
-from app.core.constants import APP_NAME, APP_VERSION, SCHEMA_VERSION
+from app.core.constants import APP_NAME, APP_VERSION, SCHEMA_VERSION, UNKNOWN_DISPLAY
 from app.core.errors import BinTelError
 from app.core.logging_config import get_logger, setup_logging
 from app.core.paths import get_paths, reset_paths_cache
@@ -143,6 +144,8 @@ def cmd_import_data(args: argparse.Namespace) -> int:
         create_schema(manager.engine)
 
     try:
+        if args.stage and not args.dry_run:
+            return _import_through_staging(manager, options, source, args)
         if source.is_dir():
             batch = BatchImporter(options)
             print(f"Importing {len(batch.files())} file(s) from {source}…")
@@ -175,6 +178,60 @@ def cmd_import_data(args: argparse.Namespace) -> int:
             _refresh_record_count(manager)
     finally:
         manager.close()
+    return EXIT_OK
+
+
+def _import_through_staging(
+    manager: DatabaseManager,
+    options: Any,
+    source: Path,
+    args: argparse.Namespace,
+) -> int:
+    """Import via the staging layer — the default, and the safe path.
+
+    Records land in ``staging_records``, are normalized, validated and
+    resolved there, and only reach production once they pass. A source with
+    bad rows then spoils the staging table rather than the database people
+    are looking things up in.
+    """
+    from app.importers.batch import BatchImporter
+    from app.importers.registry import importer_for
+    from app.services.ingest_service import IngestService
+    from app.services.staging_service import StagingService
+
+    importer = (
+        BatchImporter(options) if source.is_dir() else importer_for(options, name=args.format)
+    )
+    print(f"Importing {source.name} through staging…")
+
+    session = manager.new_session()
+    try:
+        staging = StagingService(session)
+        ingest = IngestService(
+            session,
+            source_code=options.source_code,
+            source_name=options.source_name,
+        )
+        ingest.seed_reference_data()
+        report = staging.run(importer.iter_records(), ingest)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+    print(f"\n{report.summary}")
+    for note in dict.fromkeys(report.issues):
+        print(f"  · {note}")
+    if report.held:
+        print(
+            f"\n{report.held} record(s) held back. "
+            f"Inspect them with:\n  python -m app.cli staging --batch {report.batch_id}"
+        )
+    if report.promoted:
+        rebuild_indexes(manager.engine)
+        _refresh_record_count(manager)
     return EXIT_OK
 
 
@@ -359,9 +416,44 @@ def cmd_lookup(args: argparse.Namespace) -> int:
     if not result.found or result.best is None:
         print(f"No record found for {args.bin}.", file=sys.stderr)
         return EXIT_ERROR
+
     record = result.best
-    print(f"{record.bin}  (matched by {result.matched_by}, {result.elapsed_ms:.1f} ms)")
+    print(f"{record.bin}  ({result.match_label}, {result.elapsed_ms:.1f} ms)")
     _print_table([(label, value) for label, value in record.to_field_pairs()])
+
+    # The reasoning, not just the answer: which relationships the allocation
+    # supports, whether anything disagrees, and what the query did not reach.
+    if result.relationships:
+        print("\nRelationships")
+        _print_table(
+            [
+                (
+                    f"{item.relationship_label} ({item.standing_label})",
+                    f"{item.display_name}"
+                    + (
+                        f" · {item.effective_period}"
+                        if item.effective_period != UNKNOWN_DISPLAY
+                        else ""
+                    ),
+                )
+                for item in result.relationships
+            ]
+        )
+    else:
+        print("\nNo institution relationship is recorded for this prefix.")
+
+    print(f"\nConfidence: {result.confidence_level.capitalize()} ({result.confidence_percent}%)")
+    for reason in result.confidence_reasons:
+        print(f"  · {reason}")
+
+    if result.is_conflicted:
+        names = ", ".join(item.display_name for item in result.conflicting_institutions)
+        print(f"\nConflict: records also name {names}. Both readings are kept.")
+    if result.more_specific_count:
+        print(
+            f"\n{result.more_specific_count} more specific assignment(s) exist beneath "
+            "this prefix and may belong to other institutions."
+        )
     return EXIT_OK
 
 
@@ -402,6 +494,89 @@ def cmd_restore(args: argparse.Namespace) -> int:
     backup = Path(args.backup).expanduser()
     restore_backup(backup, path)
     print(f"Restored {backup} to {path}")
+    return EXIT_OK
+
+
+def cmd_quality(args: argparse.Namespace) -> int:
+    """Measure and print the database's quality metrics."""
+    from app.repositories.metadata_repository import MetadataRepository
+    from app.services.quality_service import DataQualityService
+
+    manager = _open(args)
+    try:
+        version = MetadataRepository(manager).all().get(DatabaseMetadata.VERSION)
+        service = DataQualityService(manager)
+        report = service.evaluate(database_version=version)
+        if report.error:
+            print(report.error, file=sys.stderr)
+            return EXIT_ERROR
+        if args.store:
+            written = service.store(report)
+            print(f"Stored {written} metric(s) in the database.\n")
+    finally:
+        manager.close()
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "database_version": report.database_version,
+                    "computed_at": report.computed_at.isoformat(),
+                    "metrics": [
+                        {
+                            "key": metric.key,
+                            "label": metric.label,
+                            "numerator": metric.numerator,
+                            "denominator": metric.denominator,
+                            "ratio": metric.ratio,
+                        }
+                        for metric in report.metrics
+                    ],
+                },
+                indent=2,
+            )
+        )
+        return EXIT_OK
+
+    print(f"{APP_NAME} data quality — {report.database_version or 'unknown version'}")
+    _print_table(
+        [(metric.label, f"{metric.display}  ({metric.detail})") for metric in report.metrics]
+    )
+    print(f"\n{report.summary}")
+    return EXIT_OK
+
+
+def cmd_staging(args: argparse.Namespace) -> int:
+    """Show what is held in the staging layer, and why."""
+    from app.services.staging_service import StagingService
+
+    manager = _open(args)
+    try:
+        session = manager.new_session()
+        try:
+            service = StagingService(session)
+            counts = service.counts(args.batch)
+            held = service.pending(args.batch)
+            if args.clear:
+                removed = service.clear(args.batch)
+                session.commit()
+                print(f"Cleared {removed} staged record(s).")
+                return EXIT_OK
+        finally:
+            session.close()
+    finally:
+        manager.close()
+
+    if not counts:
+        print("Nothing is staged.")
+        return EXIT_OK
+
+    print("Staged records")
+    _print_table([(status.capitalize(), format_number(count)) for status, count in sorted(counts.items())])
+    if held:
+        print("\nHeld back")
+        for row in held:
+            print(f"  {row.prefix or '—':12} {row.status:12} {row.issues or ''}")
     return EXIT_OK
 
 
@@ -488,6 +663,18 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--source-code", default="import", help="provenance code recorded internally")
     imp.add_argument("--source-name", default="File import")
     imp.add_argument("--create", action="store_true", help="create the database if missing")
+    imp.add_argument(
+        "--stage",
+        action="store_true",
+        default=True,
+        help="import through the staging layer (the default, and the safe path)",
+    )
+    imp.add_argument(
+        "--no-stage",
+        dest="stage",
+        action="store_false",
+        help="write straight to production, skipping validation and conflict checks",
+    )
     imp.set_defaults(func=cmd_import_data)
 
     ded = add("dedupe", "detect and resolve duplicate records")
@@ -527,6 +714,18 @@ def build_parser() -> argparse.ArgumentParser:
     res = add("restore", "restore a verified backup")
     res.add_argument("backup", help="backup file to restore")
     res.set_defaults(func=cmd_restore)
+
+    qual = add("quality", "measure database quality metrics")
+    qual.add_argument("--json", action="store_true")
+    qual.add_argument(
+        "--store", action="store_true", help="write the metrics into the database"
+    )
+    qual.set_defaults(func=cmd_quality)
+
+    stg = add("staging", "inspect the staging layer")
+    stg.add_argument("--batch", help="restrict to one batch id")
+    stg.add_argument("--clear", action="store_true", help="discard staged records")
+    stg.set_defaults(func=cmd_staging)
 
     vs = add("version", "print version information")
     vs.set_defaults(func=cmd_version)

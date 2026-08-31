@@ -194,6 +194,11 @@ class ReportResult:
 #: the data came from.
 TABLE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("bin", "BIN"),
+    # The assigned length and whether the relationship still applies. Without
+    # them a report cannot distinguish a six-digit root from an eight-digit
+    # assignment, or a current issuer from a former one.
+    ("length", "Length"),
+    ("standing", "Standing"),
     ("network", "Network"),
     ("brand", "Card Brand"),
     ("card_type", "Card Type"),

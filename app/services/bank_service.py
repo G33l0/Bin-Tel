@@ -16,6 +16,7 @@ from app.models.schemas import (
 )
 from app.repositories.bin_repository import BinRepository
 from app.repositories.institution_repository import InstitutionRepository
+from app.services.portfolio_service import InstitutionPortfolio, PortfolioService
 from app.utils.validators import validate_search_term
 
 logger = get_logger(__name__)
@@ -25,10 +26,16 @@ class BankService:
     """Search institutions, then page through the BINs that belong to them."""
 
     def __init__(
-        self, institutions: InstitutionRepository, bins: BinRepository
+        self,
+        institutions: InstitutionRepository,
+        bins: BinRepository,
+        portfolios: PortfolioService | None = None,
     ) -> None:
         self._institutions = institutions
         self._bins = bins
+        # Optional so a caller that only wants search does not have to build
+        # one; when present, BIN listings become portfolio-complete.
+        self._portfolios = portfolios
 
     @property
     def available(self) -> bool:
@@ -60,12 +67,40 @@ class BankService:
         institution_id: int,
         request: PageRequest,
         filters: BinFilters | None = None,
+        *,
+        include_related: bool = True,
     ) -> Page[BinRow]:
+        """One page of the institution's BINs.
+
+        By default this is the *portfolio*: the institution's own assignments
+        plus those of the subsidiaries, predecessors and brands whose BINs
+        belong to it. Pass ``include_related=False`` for the narrow view.
+        """
+        if self._portfolios is not None:
+            return self._portfolios.page(
+                institution_id, request, filters, include_related=include_related
+            )
         return self._bins.page_for_institution(institution_id, request, filters)
 
-    def all_bins(self, institution_id: int) -> list[BinRow]:
+    def all_bins(
+        self,
+        institution_id: int,
+        filters: BinFilters | None = None,
+        *,
+        include_related: bool = True,
+    ) -> list[BinRow]:
         """Full BIN list for an institution — export paths only."""
+        if self._portfolios is not None:
+            return self._portfolios.all_rows(
+                institution_id, filters, include_related=include_related
+            )
         return self._bins.all_bins_for_institution(institution_id)
+
+    def portfolio(self, institution_id: int) -> InstitutionPortfolio | None:
+        """The complete portfolio picture, or ``None`` without the service."""
+        if self._portfolios is None:
+            return None
+        return self._portfolios.build(institution_id)
 
     def stats(self, institution_id: int) -> InstitutionStats:
         raw = self._bins.institution_bin_stats(institution_id)

@@ -91,20 +91,126 @@ class RecordStatus(StrEnum):
         return self.value.capitalize() if self is not RecordStatus.UNKNOWN else "Unknown"
 
 
+class PrefixType(StrEnum):
+    """How a stored prefix was assigned.
+
+    The distinction matters: a six-digit root and an eight-digit assignment
+    under it are *different* allocations, and in modern eight-digit issuance
+    the root may be shared by several issuers. Collapsing one into the other
+    would attribute a card to the wrong institution.
+    """
+
+    #: A six-digit IIN assigned in its own right.
+    ROOT = "root"
+    #: An eight-digit assignment, which may sit under a shared six-digit root.
+    EXTENDED = "extended"
+    #: An account range rather than a single prefix.
+    RANGE = "range"
+
+    @property
+    def label(self) -> str:
+        return {
+            PrefixType.ROOT: "6-digit IIN",
+            PrefixType.EXTENDED: "8-digit BIN",
+            PrefixType.RANGE: "Account range",
+        }[self]
+
+
+class RangeType(StrEnum):
+    """What kind of allocation a range row describes."""
+
+    #: A scheme-assigned issuer range.
+    ISSUER_RANGE = "issuer_range"
+    #: A network account range, the most specific authoritative allocation.
+    ACCOUNT_RANGE = "account_range"
+    #: The expanded block under a six-digit root.
+    ROOT_BLOCK = "root_block"
+    UNKNOWN = "unknown"
+
+    @property
+    def label(self) -> str:
+        return self.value.replace("_", " ").title()
+
+
 class RelationshipType(StrEnum):
-    """Why an institution is attached to a BIN."""
+    """Why an institution is attached to a BIN.
+
+    These describe *issuance and ownership*, never transaction routing. Nothing
+    here should be read as saying where a transaction is switched.
+    """
 
     ISSUER = "issuer"
+    FORMER_ISSUER = "former_issuer"
     PARENT = "parent"
+    SUBSIDIARY = "subsidiary"
+    PROGRAM_ISSUER = "program_issuer"
+    PROCESSOR_ASSOCIATED = "processor_associated"
     PROCESSOR = "processor"
     PROGRAM_MANAGER = "program_manager"
     ACQUIRER = "acquirer"
     LICENSEE = "licensee"
     PREDECESSOR = "predecessor"
+    UNKNOWN = "unknown"
+
+    @property
+    def label(self) -> str:
+        return {
+            RelationshipType.ISSUER: "Issuer",
+            RelationshipType.FORMER_ISSUER: "Former issuer",
+            RelationshipType.PROGRAM_ISSUER: "Program issuer",
+            RelationshipType.PROCESSOR_ASSOCIATED: "Processor (associated)",
+            RelationshipType.UNKNOWN: "Unknown relationship",
+        }.get(self, self.value.replace("_", " ").title())
+
+    @property
+    def is_issuing(self) -> bool:
+        """Whether this relationship asserts the institution issues the card."""
+        return self in (
+            RelationshipType.ISSUER,
+            RelationshipType.PROGRAM_ISSUER,
+        )
+
+
+class InstitutionLinkType(StrEnum):
+    """How two institutions are related to each other."""
+
+    PARENT = "parent"
+    SUBSIDIARY = "subsidiary"
+    PREDECESSOR = "predecessor"
+    SUCCESSOR = "successor"
+    BRAND_OF = "brand_of"
+    PROCESSOR_FOR = "processor_for"
 
     @property
     def label(self) -> str:
         return self.value.replace("_", " ").title()
+
+    @property
+    def inverse(self) -> InstitutionLinkType:
+        return {
+            InstitutionLinkType.PARENT: InstitutionLinkType.SUBSIDIARY,
+            InstitutionLinkType.SUBSIDIARY: InstitutionLinkType.PARENT,
+            InstitutionLinkType.PREDECESSOR: InstitutionLinkType.SUCCESSOR,
+            InstitutionLinkType.SUCCESSOR: InstitutionLinkType.PREDECESSOR,
+            InstitutionLinkType.BRAND_OF: InstitutionLinkType.BRAND_OF,
+            InstitutionLinkType.PROCESSOR_FOR: InstitutionLinkType.PROCESSOR_FOR,
+        }[self]
+
+
+class StagingStatus(StrEnum):
+    """Where a staged record has reached in the promotion pipeline."""
+
+    RECEIVED = "received"
+    NORMALIZED = "normalized"
+    VALIDATED = "validated"
+    RESOLVED = "resolved"
+    CONFLICTED = "conflicted"
+    REJECTED = "rejected"
+    PROMOTED = "promoted"
+
+    @property
+    def label(self) -> str:
+        return self.value.capitalize()
 
 
 class InstitutionType(StrEnum):
@@ -260,6 +366,11 @@ class Institution(Base):
     bin_links: Mapped[list[BinInstitution]] = relationship(
         back_populates="institution", cascade="all, delete-orphan"
     )
+    outgoing_relationships: Mapped[list[InstitutionRelationship]] = relationship(
+        back_populates="institution",
+        foreign_keys="InstitutionRelationship.institution_id",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_institutions_normalized_name", "normalized_name"),
@@ -348,9 +459,29 @@ class Bin(Base):
     bin: Mapped[str] = mapped_column(String(11), nullable=False, unique=True)
     iin: Mapped[str | None] = mapped_column(String(11))
     iin_length: Mapped[int | None] = mapped_column(Integer)
+    #: The prefix exactly as assigned, and how long that assignment is. A
+    #: six-digit root and an eight-digit assignment beneath it are separate
+    #: allocations; ``prefix_length`` is what keeps them apart.
+    prefix: Mapped[str] = mapped_column(
+        String(11), nullable=False, default="", server_default=""
+    )
+    prefix_length: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=6, server_default="6"
+    )
+    prefix_type: Mapped[str] = mapped_column(
+        String(16), default=PrefixType.ROOT.value, server_default=PrefixType.ROOT.value
+    )
     #: Numeric form padded to 8 digits, so range containment is a plain integer
     #: comparison that SQLite can serve straight from an index.
     bin_int: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: The inclusive numeric span this prefix covers at the padding width, so
+    #: "is this eight-digit query inside that six-digit root" is one comparison.
+    span_low: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    span_high: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     prefix6: Mapped[str] = mapped_column(String(6), nullable=False)
     prefix8: Mapped[str | None] = mapped_column(String(8))
     network_id: Mapped[int | None] = mapped_column(ForeignKey("networks.id", ondelete="SET NULL"))
@@ -381,6 +512,10 @@ class Bin(Base):
         Index("ix_bins_bin_int", "bin_int"),
         Index("ix_bins_prefix6", "prefix6"),
         Index("ix_bins_prefix8", "prefix8"),
+        Index("ix_bins_prefix_length", "prefix", "prefix_length"),
+        Index("ix_bins_length_int", "prefix_length", "bin_int"),
+        Index("ix_bins_span", "span_low", "span_high"),
+        Index("ix_bins_type_length", "prefix_type", "prefix_length"),
         Index("ix_bins_iin", "iin"),
         Index("ix_bins_network", "network_id"),
         Index("ix_bins_country", "country_id"),
@@ -406,6 +541,21 @@ class BinRange(Base):
     range_low_int: Mapped[int] = mapped_column(Integer, nullable=False)
     range_high_int: Mapped[int] = mapped_column(Integer, nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False, default=8)
+    #: An account range is the most specific authoritative allocation there is;
+    #: a root block is the least. Specificity ranking reads this.
+    range_type: Mapped[str] = mapped_column(
+        String(24),
+        default=RangeType.ISSUER_RANGE.value,
+        server_default=RangeType.ISSUER_RANGE.value,
+    )
+    #: The span, precomputed, so "narrowest containing range" is an ORDER BY
+    #: over a stored column rather than an expression SQLite cannot index.
+    span: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     institution_id: Mapped[int | None] = mapped_column(
         ForeignKey("institutions.id", ondelete="SET NULL")
     )
@@ -432,6 +582,8 @@ class BinRange(Base):
         Index("ix_bin_ranges_high", "range_high_int"),
         Index("ix_bin_ranges_span", "range_low_int", "range_high_int"),
         Index("ix_bin_ranges_institution", "institution_id"),
+        Index("ix_bin_ranges_current", "is_current", "range_low_int", "range_high_int"),
+        Index("ix_bin_ranges_type_span", "range_type", "span"),
         CheckConstraint("range_low_int <= range_high_int", name="ck_bin_range_order"),
     )
 
@@ -452,7 +604,22 @@ class BinInstitution(Base):
         String(32), default=RelationshipType.ISSUER.value
     )
     is_primary: Mapped[bool] = mapped_column(Boolean, default=True)
+    #: A relationship is a fact with a lifetime. An issuer that transferred a
+    #: portfolio in 2024 was still the issuer before then, and a lookup that
+    #: forgets that cannot answer a question about a card issued in 2022.
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default=RecordStatus.ACTIVE.value,
+        server_default=RecordStatus.ACTIVE.value,
+    )
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
+    #: The evidence band behind ``confidence`` — see app.normalizers.confidence.
+    confidence_level: Mapped[str | None] = mapped_column(String(16))
+    #: Why, in short human-readable clauses. Never source names.
+    confidence_reasons: Mapped[str | None] = mapped_column(Text)
     first_seen: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow)
     last_updated: Mapped[datetime | None] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
@@ -466,6 +633,8 @@ class BinInstitution(Base):
         Index("ix_bin_institutions_bin", "bin_id"),
         Index("ix_bin_institutions_institution", "institution_id"),
         Index("ix_bin_institutions_primary", "institution_id", "is_primary"),
+        Index("ix_bin_institutions_current", "bin_id", "is_current", "relationship_type"),
+        Index("ix_bin_institutions_history", "institution_id", "is_current"),
     )
 
 
@@ -648,6 +817,124 @@ class InstitutionHistory(Base):
     __table_args__ = (
         Index("ix_institution_history_uid", "institution_uid", "changed_at"),
         Index("ix_institution_history_version", "database_version"),
+    )
+
+
+class InstitutionRelationship(Base):
+    """How two institutions relate to each other.
+
+    ``institutions.parent_id`` models one parent, which is not enough: a bank
+    can be the successor of one entity, a brand of another and a subsidiary of
+    a third. Those are different facts with different lifetimes, so they get
+    rows rather than columns.
+
+    Following these is what makes an institution lookup complete — searching a
+    parent group should reach the BINs its subsidiaries issue.
+    """
+
+    __tablename__ = "institution_relationships"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    institution_id: Mapped[int] = mapped_column(
+        ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False
+    )
+    related_institution_id: Mapped[int] = mapped_column(
+        ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False
+    )
+    relationship_type: Mapped[str] = mapped_column(
+        String(32), default=InstitutionLinkType.SUBSIDIARY.value
+    )
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime)
+    is_current: Mapped[bool] = mapped_column(Boolean, default=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.8)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    institution: Mapped[Institution] = relationship(
+        foreign_keys=[institution_id], back_populates="outgoing_relationships"
+    )
+    related: Mapped[Institution] = relationship(foreign_keys=[related_institution_id])
+
+    __table_args__ = (
+        UniqueConstraint(
+            "institution_id",
+            "related_institution_id",
+            "relationship_type",
+            name="uq_institution_relationship",
+        ),
+        CheckConstraint(
+            "institution_id != related_institution_id", name="ck_institution_not_self"
+        ),
+        Index("ix_institution_rel_from", "institution_id", "is_current"),
+        Index("ix_institution_rel_to", "related_institution_id", "is_current"),
+    )
+
+
+class StagingRecord(Base):
+    """One imported record, held before it is allowed near production tables.
+
+    Raw data is never written straight into ``bins`` and ``institutions``. It
+    lands here, is normalized, validated, resolved and conflict-checked, and is
+    promoted only once it passes. A bad feed then spoils the staging table
+    instead of the database people are looking things up in.
+    """
+
+    __tablename__ = "staging_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("sources.id", ondelete="SET NULL"))
+    #: The record exactly as it arrived, as JSON. Issuer metadata only.
+    raw_payload: Mapped[str | None] = mapped_column(Text)
+    #: The record after normalization, as JSON.
+    normalized_payload: Mapped[str | None] = mapped_column(Text)
+    prefix: Mapped[str | None] = mapped_column(String(11))
+    prefix_length: Mapped[int | None] = mapped_column(Integer)
+    prefix_type: Mapped[str | None] = mapped_column(String(16))
+    range_low: Mapped[str | None] = mapped_column(String(11))
+    range_high: Mapped[str | None] = mapped_column(String(11))
+    institution_name: Mapped[str | None] = mapped_column(String(256))
+    resolved_institution_id: Mapped[int | None] = mapped_column(
+        ForeignKey("institutions.id", ondelete="SET NULL")
+    )
+    resolution_match_type: Mapped[str | None] = mapped_column(String(24))
+    status: Mapped[str] = mapped_column(String(16), default=StagingStatus.RECEIVED.value)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    confidence_level: Mapped[str | None] = mapped_column(String(16))
+    #: Why a record was rejected, or what could not be resolved.
+    issues: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    promoted_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    __table_args__ = (
+        Index("ix_staging_batch", "batch_id", "status"),
+        Index("ix_staging_prefix", "prefix", "prefix_length"),
+        Index("ix_staging_status", "status"),
+    )
+
+
+class DataQualityMetric(Base):
+    """A measured quality figure for one database release.
+
+    Every value here is counted from the database it describes. Nothing in this
+    table is estimated, and nothing is written unless it was computed.
+    """
+
+    __tablename__ = "data_quality_metrics"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    label: Mapped[str] = mapped_column(String(160), nullable=False)
+    #: The counted numerator and denominator, kept so a ratio can be explained.
+    numerator: Mapped[int] = mapped_column(Integer, default=0)
+    denominator: Mapped[int] = mapped_column(Integer, default=0)
+    ratio: Mapped[float | None] = mapped_column(Float)
+    database_version: Mapped[str | None] = mapped_column(String(32))
+    computed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("key", "database_version", name="uq_quality_metric"),
+        Index("ix_quality_metrics_key", "key"),
     )
 
 

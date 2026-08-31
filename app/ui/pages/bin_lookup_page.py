@@ -244,21 +244,31 @@ class BinLookupPage(BasePage):
         record = result.best
         if record is None:  # pragma: no cover - guarded by result.found
             return
-        self.result_card.show_record(record)
+        # The card is handed the whole result, not just the record: how the
+        # match was reached, how well it is evidenced and whether anything
+        # disagrees are all part of the answer.
+        self.result_card.show_lookup(result)
 
-        notes = {
-            "prefix": (
-                f"No exact match for {result.query}. Showing the closest issuer prefix "
-                f"on record ({record.bin})."
-            ),
-            "range": (
-                f"{result.query} falls inside an allocated issuer range "
-                f"({record.bin_range})."
-            ),
-        }
-        note = notes.get(result.matched_by, "")
+        # The card already states how the match was reached; this line says
+        # what the *query* resolved to when that is not the value typed.
+        note = ""
+        if record.bin != result.query:
+            if record.bin_range:
+                note = (
+                    f"{result.query} falls inside the allocated range "
+                    f"{record.bin_range}."
+                )
+            else:
+                note = (
+                    f"No assignment recorded at {len(result.query)} digits. "
+                    f"Answered from the {record.bin_length_label.replace(' digits', '-digit')} "
+                    f"allocation {record.bin}."
+                )
         if len(result.records) > 1:
-            note = f"{note} {len(result.records)} candidate prefixes matched.".strip()
+            note = (
+                f"{note} {len(result.records) - 1} broader allocation(s) also "
+                "cover this value."
+            ).strip()
         self.match_note.setText(note)
         self.match_note.setVisible(bool(note))
 

@@ -117,7 +117,13 @@ class AddressDTO(_DTO):
 
 
 class InstitutionSummary(_DTO):
-    """Just enough to name an institution inside a BIN result."""
+    """One institution's relationship to a BIN, with its lifetime and standing.
+
+    A BIN result carries *every* relationship the data supports, not a single
+    winner. Each one says what kind of relationship it is, whether it is
+    current, when it applied, and how well it is evidenced — so a caller can
+    tell a present-day issuer from a predecessor at a glance.
+    """
 
     id: int
     display_name: str
@@ -126,10 +132,49 @@ class InstitutionSummary(_DTO):
     relationship_type: str = "issuer"
     is_primary: bool = True
     website: str | None = None
+    uid: str | None = None
+    status: str | None = None
+    is_current: bool = True
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
+    confidence: float | None = None
+    confidence_level: str | None = None
 
     @property
     def relationship_label(self) -> str:
-        return self.relationship_type.replace("_", " ").title()
+        from app.models.entities import RelationshipType
+
+        try:
+            return RelationshipType(self.relationship_type).label
+        except ValueError:
+            return self.relationship_type.replace("_", " ").title()
+
+    @property
+    def is_issuing(self) -> bool:
+        """Whether this relationship asserts the institution issues the card."""
+        from app.models.entities import RelationshipType
+
+        try:
+            return RelationshipType(self.relationship_type).is_issuing
+        except ValueError:
+            return False
+
+    @property
+    def effective_period(self) -> str:
+        """``2020–2024``, ``Since 2024`` or ``—`` when no dates are recorded."""
+        start = self.effective_from.year if self.effective_from else None
+        end = self.effective_to.year if self.effective_to else None
+        if start and end:
+            return f"{start}–{end}"
+        if start:
+            return f"Since {start}"
+        if end:
+            return f"Until {end}"
+        return UNKNOWN_DISPLAY
+
+    @property
+    def standing_label(self) -> str:
+        return "Current" if self.is_current else "Historical"
 
 
 class InstitutionDetail(_DTO):
@@ -165,6 +210,11 @@ class BinRecord(_DTO):
     bin: str
     iin: str | None = None
     iin_length: int | None = None
+    #: The prefix as assigned, and how long that assignment is. A six-digit
+    #: root and an eight-digit assignment under it are different allocations,
+    #: and this is what keeps them apart in a result.
+    prefix_length: int | None = None
+    prefix_type: str | None = None
     bin_range: str | None = None
     network: NetworkDTO | None = None
     brand: str | None = None
@@ -189,17 +239,49 @@ class BinRecord(_DTO):
 
     @property
     def primary_institution(self) -> InstitutionSummary | None:
-        for institution in self.institutions:
-            if institution.is_primary and institution.relationship_type == "issuer":
+        """The best-supported *current issuing* relationship, if there is one.
+
+        A former issuer is never promoted over a current one, and an
+        associative relationship (a parent, a processor) is never promoted over
+        an issuing one — naming either as "the issuer" would be wrong.
+        """
+        current_issuers = [
+            item for item in self.institutions if item.is_issuing and item.is_current
+        ]
+        for institution in current_issuers:
+            if institution.is_primary:
                 return institution
-        for institution in self.institutions:
-            if institution.relationship_type == "issuer":
-                return institution
+        if current_issuers:
+            return current_issuers[0]
+        issuers = [item for item in self.institutions if item.is_issuing]
+        if issuers:
+            return issuers[0]
         return self.institutions[0] if self.institutions else None
 
     @property
     def has_multiple_institutions(self) -> bool:
         return len(self.institutions) > 1
+
+    @property
+    def current_institutions(self) -> tuple[InstitutionSummary, ...]:
+        return tuple(item for item in self.institutions if item.is_current)
+
+    @property
+    def historical_institutions(self) -> tuple[InstitutionSummary, ...]:
+        return tuple(item for item in self.institutions if not item.is_current)
+
+    @property
+    def issuing_institutions(self) -> tuple[InstitutionSummary, ...]:
+        """Relationships that actually assert issuance, current ones first."""
+        return tuple(
+            item for item in self.institutions if item.is_issuing and item.is_current
+        )
+
+    @property
+    def bin_length_label(self) -> str:
+        """``8 digits`` — the assigned length, not the length of the query."""
+        length = self.prefix_length or len(self.bin)
+        return f"{length} digits"
 
     @property
     def issuer_legal_name(self) -> str:
@@ -222,6 +304,9 @@ class BinRecord(_DTO):
         pairs: list[tuple[str, str]] = [
             ("BIN", display(self.bin)),
             ("IIN", display(self.iin or self.bin)),
+            # The assigned length, which is what distinguishes a six-digit root
+            # from an eight-digit assignment beneath it.
+            ("BIN Length", self.bin_length_label),
             ("IIN Length", display(self.iin_length)),
             ("BIN Range", display(self.bin_range)),
             ("Network", self.network.label if self.network else UNKNOWN_DISPLAY),
@@ -266,8 +351,45 @@ class BinRow(_DTO):
     postal_code: str | None = None
     institution: str | None = None
     status: str | None = None
+    #: The assigned length, so a table can distinguish a six-digit root from
+    #: an eight-digit assignment rather than showing them as the same kind of
+    #: thing.
+    prefix_length: int | None = None
+    prefix_type: str | None = None
+    #: Whether the relationship that puts this BIN in this table is current.
+    is_current: bool = True
+    relationship_type: str | None = None
+    #: Set when the row came from a range rather than a discrete assignment.
+    bin_range: str | None = None
+
+    @property
+    def length_label(self) -> str:
+        length = self.prefix_length or len(self.bin)
+        return f"{length}-digit"
+
+    @property
+    def standing(self) -> str:
+        return "Current" if self.is_current else "Historical"
+
+    @property
+    def relationship_label(self) -> str:
+        """``Former issuer`` rather than ``former_issuer``."""
+        from app.models.entities import RelationshipType
+
+        if not self.relationship_type:
+            return UNKNOWN_DISPLAY
+        try:
+            return RelationshipType(self.relationship_type).label
+        except ValueError:
+            return self.relationship_type.replace("_", " ").capitalize()
 
     def cell(self, key: str) -> str:
+        if key == "length":
+            return self.length_label
+        if key == "standing":
+            return self.standing
+        if key == "relationship_type":
+            return self.relationship_label
         return display(getattr(self, key, None))
 
 
@@ -292,11 +414,17 @@ class BinFilters(BaseModel):
     funding_type: str | None = None
     region: str | None = None
     text: str | None = None
+    #: ``None`` shows current and historical together, which is the honest
+    #: default for a portfolio view: a BIN an issuer used to hold is part of
+    #: its history, and hiding it silently would misrepresent the record.
+    is_current: bool | None = None
+    #: Restrict to a prefix length — 6 for roots, 8 for extended assignments.
+    prefix_length: int | None = None
 
     @property
     def is_active(self) -> bool:
         return any(
-            value
+            value is not None and value != ""
             for value in (
                 self.country_code,
                 self.network_code,
@@ -304,6 +432,8 @@ class BinFilters(BaseModel):
                 self.funding_type,
                 self.region,
                 self.text,
+                self.is_current,
+                self.prefix_length,
             )
         )
 
@@ -372,14 +502,30 @@ class Page(BaseModel, Generic[T]):
 
 
 class BinLookupResult(BaseModel):
-    """Outcome of a BIN/IIN search."""
+    """Outcome of a BIN/IIN search.
+
+    ``records`` is ordered by how specific the matching allocation was, so
+    ``best`` is the most specific one — never merely the first one found.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     query: str
     records: tuple[BinRecord, ...] = ()
-    matched_by: str = "exact"  # exact | prefix | range
+    matched_by: str = "exact"
     elapsed_ms: float = 0.0
+    #: How the winning allocation was found, and how narrow it is. Internal
+    #: vocabulary — the interface shows the label, never a data-source name.
+    strategy: str = "none"
+    match_label: str = ""
+    #: The overall confidence in the answer, and the reasons behind it.
+    confidence_score: float = 0.0
+    confidence_level: str = "unknown"
+    confidence_reasons: tuple[str, ...] = ()
+    #: Institutions named by an equally specific record that disagrees.
+    conflicting_institutions: tuple[InstitutionSummary, ...] = ()
+    #: More specific assignments recorded beneath the value searched for.
+    more_specific_count: int = 0
 
     @property
     def found(self) -> bool:
@@ -388,6 +534,34 @@ class BinLookupResult(BaseModel):
     @property
     def best(self) -> BinRecord | None:
         return self.records[0] if self.records else None
+
+    @property
+    def resolved(self) -> bool:
+        """Whether an institution was actually named.
+
+        A prefix can be present in the database with no institution attached.
+        That is a found record but an unresolved lookup, and saying so is the
+        point — the alternative is inventing an issuer.
+        """
+        best = self.best
+        return bool(best and best.institutions)
+
+    @property
+    def is_conflicted(self) -> bool:
+        return self.confidence_level == "conflicted"
+
+    @property
+    def relationships(self) -> tuple[InstitutionSummary, ...]:
+        best = self.best
+        return best.institutions if best else ()
+
+    @property
+    def institution_count(self) -> int:
+        return len({item.id for item in self.relationships})
+
+    @property
+    def confidence_percent(self) -> int:
+        return int(round(max(0.0, min(1.0, self.confidence_score)) * 100))
 
 
 class InstitutionStats(BaseModel):

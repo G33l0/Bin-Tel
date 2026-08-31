@@ -22,7 +22,7 @@ from app.ui.widgets.cards import Card
 from app.ui.widgets.search_box import SearchBox
 from app.ui.widgets.states import EmptyState, ErrorState, LoadingState
 from app.utils.qt_helpers import expanding_spacer, hbox, shortcut
-from app.workers.base import run_in_background
+from app.workers.base import Worker, run_in_background
 from app.workers.search_worker import (
     AllBinsWorker,
     BankSearchWorker,
@@ -230,6 +230,14 @@ class BankLookupPage(BasePage):
         options_worker = FilterOptionsWorker(self.context.banks, match.id)
         options_worker.signals.result.connect(self.result_view.set_filter_options)
         run_in_background(options_worker)
+
+        # The portfolio spans related institutions, history and ranges, so it
+        # is counted separately from the per-institution statistics.
+        portfolio_worker: Worker = Worker(
+            lambda identifier=match.id: self.context.banks.portfolio(identifier)
+        )
+        portfolio_worker.signals.result.connect(self.result_view.show_portfolio)
+        run_in_background(portfolio_worker)
 
         self._load_page(match.id, self.result_view.current_request(1))
 

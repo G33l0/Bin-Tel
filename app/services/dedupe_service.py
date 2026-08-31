@@ -21,6 +21,7 @@ from app.models.entities import (
     Address,
     Bin,
     BinInstitution,
+    BinRange,
     Conflict,
     ConflictStatus,
     Institution,
@@ -56,6 +57,7 @@ class DedupeReport:
     duplicate_aliases_removed: int = 0
     duplicate_addresses_removed: int = 0
     duplicate_links_removed: int = 0
+    range_conflicts_recorded: int = 0
     duplicate_bins: int = 0
     review_candidates: list[MergeCandidate] = field(default_factory=list)
     merged: list[MergeCandidate] = field(default_factory=list)
@@ -86,6 +88,7 @@ class DedupeService:
         self.deduplicate_addresses(report)
         self.deduplicate_links(report)
         self.find_duplicate_bins(report)
+        self.find_range_conflicts(report)
         self.deduplicate_institutions(report, merge=merge)
         if not self._dry_run:
             self._session.flush()
@@ -176,15 +179,73 @@ class DedupeService:
         return removed
 
     def find_duplicate_bins(self, report: DedupeReport) -> int:
-        """``bins.bin`` is unique, so this only ever reports a schema problem."""
+        """Count allocations recorded more than once.
+
+        The identity of a BIN record is its **prefix and the length that
+        prefix was assigned at** — not the digits alone. ``410000`` and
+        ``41000012`` share a leading six digits and are two different
+        allocations, so grouping on the digits would either miss real
+        duplicates or invent them. A unique constraint on ``bins.bin`` keeps
+        this at zero in practice; the check exists to catch a package built
+        by a pipeline that lost it.
+        """
         duplicated = (
-            select(Bin.bin).group_by(Bin.bin).having(func.count(Bin.id) > 1).subquery()
+            select(Bin.prefix, Bin.prefix_length)
+            .group_by(Bin.prefix, Bin.prefix_length)
+            .having(func.count(Bin.id) > 1)
+            .subquery()
         )
         rows = self._session.execute(
             select(func.count()).select_from(duplicated)
         ).scalar()
         report.duplicate_bins = int(rows or 0)
         return report.duplicate_bins
+
+    def find_range_conflicts(self, report: DedupeReport) -> int:
+        """Record spans that two different institutions both claim.
+
+        A unique constraint already stops the *same* institution holding one
+        span twice, so an exact duplicate cannot exist. What can exist — and
+        what matters — is two issuers claiming the same allocation. That is a
+        disagreement, not a duplicate, so it is recorded as a conflict and both
+        rows are kept for the lookup engine to report.
+        """
+        contested = self._session.execute(
+            select(
+                BinRange.range_low,
+                BinRange.range_high,
+                func.count(func.distinct(BinRange.institution_id)),
+            )
+            .where(BinRange.institution_id.is_not(None))
+            .group_by(BinRange.range_low, BinRange.range_high)
+            .having(func.count(func.distinct(BinRange.institution_id)) > 1)
+        ).all()
+
+        recorded = 0
+        for low, high, _count in contested:
+            claimants = (
+                self._session.execute(
+                    select(Institution.display_name)
+                    .join(BinRange, BinRange.institution_id == Institution.id)
+                    .where(BinRange.range_low == low, BinRange.range_high == high)
+                    .order_by(Institution.display_name)
+                )
+                .scalars()
+                .all()
+            )
+            if len(claimants) < 2:
+                continue
+            if self._record_conflict(
+                entity_type="bin_range",
+                entity_key=f"{low}-{high}",
+                field="institution",
+                value_a=str(claimants[0]),
+                value_b=", ".join(str(name) for name in claimants[1:]),
+            ):
+                recorded += 1
+        report.range_conflicts_recorded = recorded
+        report.conflicts_recorded += recorded
+        return recorded
 
     # -- institution merging ----------------------------------------------
     @staticmethod
@@ -308,7 +369,7 @@ class DedupeService:
             if kept_value in (None, ""):
                 setattr(keep, field_name, dropped_value)
             elif kept_value != dropped_value:
-                self._record_conflict(keep, field_name, kept_value, dropped_value)
+                self._record_institution_conflict(keep, field_name, kept_value, dropped_value)
                 report.conflicts_recorded += 1
 
         # The dropped name stays findable as an alias.
@@ -398,27 +459,47 @@ class DedupeService:
         self._session.flush()
 
     def _record_conflict(
-        self, institution: Institution, field_name: str, kept: object, dropped: object
-    ) -> None:
+        self,
+        *,
+        entity_type: str,
+        entity_key: str,
+        field: str,
+        value_a: object,
+        value_b: object,
+    ) -> bool:
+        """Record a disagreement once. Returns whether it was new."""
         exists = self._session.execute(
             select(Conflict.id).where(
-                Conflict.entity_type == "institution",
-                Conflict.entity_key == str(institution.id),
-                Conflict.field == field_name,
-                Conflict.value_a == str(kept),
-                Conflict.value_b == str(dropped),
+                Conflict.entity_type == entity_type,
+                Conflict.entity_key == entity_key,
+                Conflict.field == field,
+                Conflict.value_a == str(value_a),
+                Conflict.value_b == str(value_b),
             )
         ).scalar()
         if exists is not None:
-            return
+            return False
         self._session.add(
             Conflict(
-                entity_type="institution",
-                entity_key=str(institution.id),
-                field=field_name,
-                value_a=str(kept),
-                value_b=str(dropped),
+                entity_type=entity_type,
+                entity_key=entity_key,
+                field=field,
+                value_a=str(value_a),
+                value_b=str(value_b),
                 status=ConflictStatus.OPEN.value,
                 detected_at=datetime.now(UTC),
             )
+        )
+        return True
+
+    def _record_institution_conflict(
+        self, institution: Institution, field_name: str, kept: object, dropped: object
+    ) -> None:
+        """A field two merged institutions disagreed about."""
+        self._record_conflict(
+            entity_type="institution",
+            entity_key=str(institution.id),
+            field=field_name,
+            value_a=kept,
+            value_b=dropped,
         )

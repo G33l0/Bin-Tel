@@ -145,3 +145,51 @@ def is_sensitive_length(value: str) -> bool:
     Used to refuse the input outright rather than silently truncating it.
     """
     return len(clean_digits(value)) >= 12
+
+
+# ---------------------------------------------------------------------------
+# Luhn — a format check, and nothing more
+# ---------------------------------------------------------------------------
+#
+# The Luhn algorithm is a check-digit scheme for detecting transcription errors
+# in an account number. It says nothing about *who issued* a card, which
+# network runs it, or who owns the BIN.
+#
+# It is therefore never used anywhere in issuer resolution, and it must not be:
+# a number can pass Luhn and belong to no one, or fail it and be a perfectly
+# real card that was mistyped. This function exists so that a caller who needs
+# a format check has one, in a place where its limits are stated.
+#
+# Bin-Tel never asks a user for a full card number, so nothing in the
+# application calls this on one.
+
+
+def luhn_check_digit(digits: str) -> int | None:
+    """The check digit that would complete *digits*, or ``None`` if unusable.
+
+    Purely arithmetic. Establishes nothing about an issuer.
+    """
+    cleaned = clean_digits(digits)
+    if not cleaned:
+        return None
+    total = 0
+    for index, character in enumerate(reversed(cleaned)):
+        value = int(character)
+        if index % 2 == 0:
+            value *= 2
+            if value > 9:
+                value -= 9
+        total += value
+    return (10 - total % 10) % 10
+
+
+def passes_luhn(digits: str) -> bool:
+    """Whether *digits* satisfies the Luhn check.
+
+    A format check only. **Never** evidence of BIN ownership, institution
+    identity or network ownership — see the note above.
+    """
+    cleaned = clean_digits(digits)
+    if len(cleaned) < 2:
+        return False
+    return luhn_check_digit(cleaned[:-1]) == int(cleaned[-1])

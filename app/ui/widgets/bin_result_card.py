@@ -15,10 +15,11 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QPushButton, QSizePolicy, QWidget
 
 from app.core.constants import UNKNOWN_DISPLAY
-from app.models.schemas import BinRecord
+from app.models.schemas import BinLookupResult, BinRecord
 from app.services.export_service import summarise_for_clipboard
 from app.ui.themes.icons import IconProvider
 from app.ui.widgets.cards import Card, Chip, FieldRow, KeyValueCard, SectionHeader
+from app.ui.widgets.states import StateBanner, StateKind
 from app.utils.formatting import format_bin, format_datetime
 from app.utils.qt_helpers import copy_to_clipboard, expanding_spacer, hbox, vbox
 
@@ -60,6 +61,16 @@ class BinResultCard(QWidget):
 
         self.chip_row = hbox(spacing=6)
         headline_column.addLayout(self.chip_row)
+
+        # How the answer was reached and how well it is evidenced. Kept to the
+        # match's *specificity* and a confidence word — never a source name.
+        self.match_label = QLabel("", self.headline)
+        self.match_label.setProperty("role", "muted")
+        self.match_label.setWordWrap(True)
+        self.match_label.setAccessibleName("How this BIN was matched")
+        self.match_label.hide()
+        headline_column.addWidget(self.match_label)
+
         header_row.addLayout(headline_column, 1)
 
         actions = vbox(spacing=6)
@@ -81,6 +92,14 @@ class BinResultCard(QWidget):
         self.headline.body.addLayout(header_row)
         layout.addWidget(self.headline)
 
+        # -- advisory -----------------------------------------------------
+        # Shown when the data disagrees with itself, when nothing resolves, or
+        # when a more specific assignment exists beneath what was searched for.
+        # All three are things a reader has to know to use the answer.
+        self.advisory = StateBanner("", StateKind.INFO, self)
+        self.advisory.hide()
+        layout.addWidget(self.advisory)
+
         # -- detail grid --------------------------------------------------
         self.details = KeyValueCard("Record details", self, columns=3)
         layout.addWidget(self.details)
@@ -97,13 +116,12 @@ class BinResultCard(QWidget):
 
         # -- related institutions ----------------------------------------
         self.institutions_card = Card(self, padding=18, spacing=12)
-        self.institutions_card.body.addWidget(
-            SectionHeader(
-                "Associated institutions",
-                "This BIN is legitimately associated with more than one institution.",
-                parent=self.institutions_card,
-            )
+        self.institutions_header = SectionHeader(
+            "Associated institutions",
+            "Every recorded relationship is shown.",
+            parent=self.institutions_card,
         )
+        self.institutions_card.body.addWidget(self.institutions_header)
         self._institutions_layout = vbox(spacing=8)
         self.institutions_card.body.addLayout(self._institutions_layout)
         self.institutions_card.hide()
@@ -189,15 +207,27 @@ class BinResultCard(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
-        if not record.has_multiple_institutions:
+        # A single current issuer needs no list. Anything else does — a
+        # historical relationship or a second claim is exactly what a reader
+        # must not be left to discover for themselves.
+        if len(record.institutions) < 2:
             self.institutions_card.hide()
             return
+
+        provider = IconProvider.instance()
+        current = len(record.current_institutions)
+        historical = len(record.historical_institutions)
+        subtitle = f"{current} current"
+        if historical:
+            subtitle += f", {historical} historical"
+        self.institutions_header.set_subtitle(
+            f"{subtitle}. Every recorded relationship is shown."
+        )
 
         for institution in record.institutions:
             row = QWidget(self.institutions_card)
             row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             row_layout = hbox(row, spacing=10)
-
             field = FieldRow(
                 institution.relationship_label,
                 institution.display_name,
@@ -205,6 +235,42 @@ class BinResultCard(QWidget):
                 selectable=False,
             )
             row_layout.addWidget(field, 1)
+
+            # Standing first: a former issuer read as a current one is the
+            # most misleading thing this card could show.
+            standing = Chip(
+                institution.standing_label,
+                row,
+                accent=provider.theme.success
+                if institution.is_current
+                else provider.theme.warning,
+            )
+            standing.setToolTip(
+                "This relationship applies now"
+                if institution.is_current
+                else "This relationship has been superseded"
+            )
+            row_layout.addWidget(standing, 0, Qt.AlignmentFlag.AlignVCenter)
+
+            period = institution.effective_period
+            if period != UNKNOWN_DISPLAY:
+                period_label = QLabel(period, row)
+                period_label.setProperty("role", "muted")
+                period_label.setAccessibleName(
+                    f"{institution.display_name} effective period"
+                )
+                row_layout.addWidget(period_label, 0, Qt.AlignmentFlag.AlignVCenter)
+
+            if institution.confidence_level:
+                row_layout.addWidget(
+                    Chip(
+                        institution.confidence_level.capitalize(),
+                        row,
+                        accent=_confidence_accent(institution.confidence_level),
+                    ),
+                    0,
+                    Qt.AlignmentFlag.AlignVCenter,
+                )
 
             open_button = QPushButton("View institution", row)
             open_button.setProperty("variant", "link")
@@ -217,10 +283,68 @@ class BinResultCard(QWidget):
 
         self.institutions_card.show()
 
+    # -- lookup-level context ---------------------------------------------
+    def show_lookup(self, result: BinLookupResult) -> None:
+        """Present the winning record together with how it was reached."""
+        record = result.best
+        if record is None:
+            self.clear()
+            return
+        self.show_record(record)
+
+        parts: list[str] = []
+        if result.match_label:
+            parts.append(f"Match: {result.match_label}")
+        if result.confidence_level and result.confidence_level != "unknown":
+            parts.append(
+                f"Confidence: {result.confidence_level.capitalize()} "
+                f"({result.confidence_percent}%)"
+            )
+        self.match_label.setText(" · ".join(parts))
+        self.match_label.setVisible(bool(parts))
+        self._render_advisory(result)
+
+    def _render_advisory(self, result: BinLookupResult) -> None:
+        """Say plainly when the answer needs qualifying."""
+        if result.is_conflicted:
+            names = ", ".join(
+                item.display_name for item in result.conflicting_institutions
+            )
+            self._advise(
+                "Records disagree about the issuing institution"
+                + (f": also named — {names}." if names else ".")
+                + " Both readings are shown; neither has been discarded.",
+                StateKind.WARNING,
+            )
+            return
+        if not result.resolved:
+            self._advise(
+                "This prefix is in the database, but no institution "
+                "relationship is recorded for it.",
+                StateKind.INFO,
+            )
+            return
+        if result.more_specific_count:
+            self._advise(
+                f"{result.more_specific_count} more specific assignment(s) exist "
+                "beneath this prefix, and may belong to other institutions.",
+                StateKind.INFO,
+            )
+            return
+        self.advisory.hide()
+
+    def _advise(self, message: str, kind: StateKind) -> None:
+        self.advisory.set_kind(kind)
+        self.advisory.message_label.setText(message)
+        self.advisory.show()
+
     def clear(self) -> None:
         self._record = None
         self.bin_label.setText("—")
         self.issuer_label.setText(UNKNOWN_DISPLAY)
+        self.match_label.setText("")
+        self.match_label.hide()
+        self.advisory.hide()
         self.details.set_fields([])
         self.location_card.hide()
         self.institutions_card.hide()
@@ -254,3 +378,16 @@ class BinResultCard(QWidget):
         self.favorite_button.setText(
             "Remove from favourites" if favorite else "Add to favourites"
         )
+
+
+def _confidence_accent(level: str) -> str:
+    """Colour for a confidence chip, taken from the active theme."""
+    theme = IconProvider.instance().theme
+    return {
+        "verified": theme.success,
+        "high": theme.success,
+        "medium": theme.info,
+        "low": theme.warning,
+        "conflicted": theme.warning,
+        "unknown": theme.text_muted,
+    }.get(level.lower(), theme.info)

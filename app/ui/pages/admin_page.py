@@ -101,6 +101,26 @@ class DatabaseAdminPage(BasePage):
             self.metrics.add_card(card)
         self.content.addWidget(self.metrics)
 
+        # -- data quality -------------------------------------------------------
+        # Measured, not estimated. Every row shows the counts behind the ratio
+        # so a figure can always be explained rather than merely believed.
+        self.quality_card = Card(self.surface, padding=18, spacing=12)
+        self.quality_card.body.addWidget(
+            SectionHeader(
+                "Data quality",
+                "Counted from this database. A metric with nothing to measure "
+                "says so rather than reporting a misleading 100%.",
+                self.quality_card,
+            )
+        )
+        self.quality_grid = grid(spacing=10)
+        self.quality_card.body.addLayout(self.quality_grid)
+        self.quality_summary = QLabel("", self.quality_card)
+        self.quality_summary.setProperty("role", "muted")
+        self.quality_summary.setWordWrap(True)
+        self.quality_card.body.addWidget(self.quality_summary)
+        self.content.addWidget(self.quality_card)
+
         # -- operations ---------------------------------------------------------
         operations = Card(self.surface, padding=18, spacing=14)
         operations.body.addWidget(
@@ -203,6 +223,67 @@ class DatabaseAdminPage(BasePage):
         self._render_backups()
         self._render_storage()
         self._assess_health()
+        self._measure_quality()
+
+    def _measure_quality(self) -> None:
+        """Count the quality metrics on a worker thread."""
+        if not self.context.database.is_open:
+            self.quality_card.hide()
+            return
+        worker: Worker = Worker(
+            lambda: self.context.quality.evaluate(
+                database_version=self.context.database_version()
+            )
+        )
+        worker.signals.result.connect(self._render_quality)
+        run_in_background(worker)
+
+    def _render_quality(self, report) -> None:
+        while self.quality_grid.count():
+            item = self.quality_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if report.error:
+            self.quality_card.hide()
+            return
+
+        theme = IconProvider.instance().theme
+        for index, metric in enumerate(report.metrics):
+            row, column = divmod(index, 3)
+            holder = QWidget(self.quality_card)
+            holder_layout = vbox(holder, spacing=2)
+
+            label = QLabel(metric.label, holder)
+            label.setProperty("role", "fieldLabel")
+            holder_layout.addWidget(label)
+
+            value = QLabel(metric.display, holder)
+            value.setProperty("role", "fieldValue")
+            if metric.measured and not metric.neutral:
+                # Green means "good", which depends on which way the metric
+                # points: a high duplicate rate is not a success. Composition
+                # figures get no colour at all — they are facts, not scores.
+                ratio = metric.ratio or 0.0
+                good = ratio >= 0.95 if metric.higher_is_better else ratio <= 0.01
+                value.setStyleSheet(
+                    f"color: {theme.success if good else theme.warning};"
+                )
+            value.setAccessibleName(f"{metric.label}: {metric.display}")
+            holder_layout.addWidget(value)
+
+            detail = QLabel(metric.detail, holder)
+            detail.setProperty("role", "muted")
+            detail.setToolTip(metric.description)
+            holder_layout.addWidget(detail)
+
+            self.quality_grid.addWidget(holder, row, column)
+
+        self.quality_summary.setText(
+            f"{report.summary}  Measured in {report.elapsed_ms:.0f} ms."
+        )
+        self.quality_card.show()
 
     def _render_statistics(self) -> None:
         if not self.context.database.is_open:

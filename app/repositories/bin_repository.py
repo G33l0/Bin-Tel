@@ -29,6 +29,9 @@ from app.models.entities import (
     Country,
     Institution,
     Network,
+    PrefixType,
+    RangeType,
+    RelationshipType,
 )
 from app.models.schemas import (
     AddressDTO,
@@ -42,9 +45,10 @@ from app.models.schemas import (
     PageRequest,
     SortDirection,
 )
+from app.lookup.resolution import Candidate
+from app.lookup.strategy import LookupStrategy
 from app.normalizers.bin_normalizer import bin_normalizer
 from app.repositories.base import BaseRepository
-from app.utils.validators import MIN_BIN_LENGTH
 
 #: Columns the bank-result table may sort by, mapped to ORM expressions.
 SORTABLE_COLUMNS: dict[str, Any] = {
@@ -55,6 +59,57 @@ SORTABLE_COLUMNS: dict[str, Any] = {
     "country": Country.name,
     "status": Bin.status,
 }
+
+
+def row_columns(primary_link: Any) -> tuple[Any, ...]:
+    """The labelled columns every BIN-table projection selects.
+
+    Shared by :class:`BinRepository` and the advanced-search repository so the
+    two cannot drift apart. Labels — not positions — are the contract.
+    """
+    return (
+        Bin.id.label("id"),
+        Bin.bin.label("bin"),
+        Network.display_name.label("network"),
+        Bin.brand.label("brand"),
+        Bin.card_type.label("card_type"),
+        Bin.funding_type.label("funding_type"),
+        Country.name.label("country"),
+        Country.iso2.label("country_code"),
+        Address.region.label("region"),
+        Address.city.label("city"),
+        Address.postal_code.label("postal_code"),
+        Institution.display_name.label("institution"),
+        Bin.status.label("status"),
+        Bin.prefix_length.label("prefix_length"),
+        Bin.prefix_type.label("prefix_type"),
+        primary_link.c.is_current.label("is_current"),
+        primary_link.c.relationship_type.label("relationship_type"),
+    )
+
+
+def primary_link_subquery(institution_ids: Sequence[int] | None = None) -> Any:
+    """The per-BIN relationship that names a row, with its standing and kind.
+
+    When *institution_ids* is given the projection is restricted to those
+    institutions' own links. That matters on a portfolio view: a BIN a
+    predecessor used to issue is in the list *because of* that historical
+    link, and describing the row by whoever holds it now would say the
+    opposite of why it is there.
+    """
+    statement = select(
+        BinInstitution.bin_id,
+        func.min(BinInstitution.institution_id).label("inst_id"),
+        func.max(BinInstitution.is_current).label("is_current"),
+        func.min(BinInstitution.relationship_type).label("relationship_type"),
+    )
+    if institution_ids:
+        statement = statement.where(
+            BinInstitution.institution_id.in_(list(institution_ids))
+        )
+    else:
+        statement = statement.where(BinInstitution.is_primary.is_(True))
+    return statement.group_by(BinInstitution.bin_id).subquery()
 
 
 class BinRepository(BaseRepository):
@@ -82,42 +137,160 @@ class BinRepository(BaseRepository):
             return self._to_record(record) if record else None
 
     def find_by_prefix(self, digits: str) -> list[BinRecord]:
-        """Stored BINs that either extend the query or are extended by it."""
-        normalized = bin_normalizer.normalize(digits)
-        ancestors = [
-            digits[:length] for length in range(MIN_BIN_LENGTH, len(digits)) if length < len(digits)
-        ]
-        condition = or_(
-            and_(Bin.bin_int >= normalized.range_low, Bin.bin_int <= normalized.range_high),
-            Bin.bin.in_(ancestors) if ancestors else Bin.id.is_(None),
-        )
-        with self.session() as session:
-            statement = self._select_full(session, condition, limit=50).unique().scalars().all()
-        # Longest (most specific) match first, then numerically.
-        ordered = sorted(statement, key=lambda row: (-len(row.bin), row.bin_int))
-        return [self._to_record(row) for row in ordered]
+        """Stored BINs that either extend the query or are extended by it.
 
-    def find_by_range(self, digits: str) -> list[BinRecord]:
-        """Allocated ranges containing the query, materialised as BIN records."""
+        Kept for callers that want the raw list. The lookup engine uses
+        :meth:`candidates` instead, which keeps the length of each assignment
+        attached so specificity can be judged.
+        """
+        return [candidate.record for candidate in self.candidates(digits)]
+
+    # -- candidate gathering ----------------------------------------------
+    def candidates(self, digits: str, *, limit: int = 60) -> list[Candidate]:
+        """Every allocation that legitimately contains *digits*.
+
+        Three sources, each tagged with how it was found so the resolver can
+        rank them:
+
+        * an assignment of exactly this length and value — the strongest thing
+          there is, and the only one that can be called an exact match;
+        * a *shorter* assignment whose span contains the query — a six-digit
+          root when an eight-digit value was typed. Real, but broader;
+        * an allocated range containing the query, account ranges included.
+
+        Longer assignments *under* a shorter query are deliberately excluded.
+        Typing ``414720`` must not drag in ``41472012``: that is a different,
+        more specific allocation which may well belong to somebody else, and
+        including it would let a child record answer for its parent.
+        """
         normalized = bin_normalizer.normalize(digits)
-        statement = (
+        length = len(normalized.bin)
+
+        candidates: list[Candidate] = []
+        with self.session() as session:
+            rows: Sequence[Bin] = (
+                self._select_full(
+                    session,
+                    and_(
+                        # Contains the query: the stored span covers it and the
+                        # assignment is no longer than what was asked for.
+                        Bin.span_low <= normalized.range_low,
+                        Bin.span_high >= normalized.range_low,
+                        Bin.prefix_length <= length,
+                    ),
+                    limit=limit,
+                )
+                .unique()
+                .scalars()
+                .all()
+            )
+            ranges: Sequence[BinRange] = (
+                session.execute(self._range_statement(normalized.range_low, limit))
+                .unique()
+                .scalars()
+                .all()
+            )
+
+            # DTOs are built while the session is open; nothing ORM-bound
+            # escapes this block.
+            for row in rows:
+                stored_length = row.prefix_length or len(row.bin)
+                candidates.append(
+                    Candidate(
+                        record=self._to_record(row),
+                        strategy=self._strategy_for(stored_length, length),
+                        span=(row.span_high or 0) - (row.span_low or 0) + 1,
+                        is_current=any(link.is_current for link in row.institution_links)
+                        or not row.institution_links,
+                    )
+                )
+            for row in ranges:
+                candidates.append(
+                    Candidate(
+                        record=self._range_to_record(row, digits),
+                        strategy=(
+                            LookupStrategy.ACCOUNT_RANGE
+                            if row.range_type == RangeType.ACCOUNT_RANGE.value
+                            else LookupStrategy.BROADER_RANGE
+                        ),
+                        span=row.range_high_int - row.range_low_int + 1,
+                        is_current=bool(row.is_current),
+                    )
+                )
+        return candidates
+
+    @staticmethod
+    def _strategy_for(stored_length: int, query_length: int) -> LookupStrategy:
+        """How a stored assignment relates to the query that found it."""
+        if stored_length == query_length:
+            if stored_length >= 8:
+                return LookupStrategy.EXACT_8
+            if stored_length == 6:
+                return LookupStrategy.EXACT_6
+            return LookupStrategy.EXACT_ASSIGNED
+        # Shorter than the query: a root that contains it, never an exact match.
+        return LookupStrategy.ROOT_PREFIX
+
+    @staticmethod
+    def _range_statement(value: int, limit: int) -> Select[Any]:
+        return (
             select(BinRange)
             .options(
                 joinedload(BinRange.network),
                 joinedload(BinRange.country),
                 joinedload(BinRange.institution).joinedload(Institution.country),
-                joinedload(BinRange.institution).selectinload(Institution.addresses),
+                joinedload(BinRange.institution)
+                .selectinload(Institution.addresses)
+                .joinedload(Address.country),
             )
             .where(
-                BinRange.range_low_int <= normalized.range_low,
-                BinRange.range_high_int >= normalized.range_low,
+                BinRange.range_low_int <= value,
+                BinRange.range_high_int >= value,
             )
-            .order_by((BinRange.range_high_int - BinRange.range_low_int).asc())
-            .limit(10)
+            # Narrowest first: the most specific allocation is the one that
+            # should answer, and the resolver confirms that ranking.
+            .order_by(BinRange.span.asc(), BinRange.range_low_int.asc())
+            .limit(limit)
         )
+
+    def find_by_range(self, digits: str) -> list[BinRecord]:
+        """Allocated ranges containing the query, materialised as BIN records."""
+        normalized = bin_normalizer.normalize(digits)
         with self.session() as session:
-            ranges: Sequence[BinRange] = session.execute(statement).unique().scalars().all()
+            ranges: Sequence[BinRange] = (
+                session.execute(self._range_statement(normalized.range_low, 10))
+                .unique()
+                .scalars()
+                .all()
+            )
             return [self._range_to_record(row, digits) for row in ranges]
+
+    def children_of(self, digits: str, *, limit: int = 200) -> list[BinRecord]:
+        """More specific assignments recorded *beneath* this prefix.
+
+        A six-digit root may have eight-digit assignments under it, and those
+        can belong to different issuers. They are never used to answer a
+        six-digit query, but a caller can legitimately ask what exists so the
+        interface can say "more specific assignments exist under this root".
+        """
+        normalized = bin_normalizer.normalize(digits)
+        length = len(normalized.bin)
+        with self.session() as session:
+            rows: Sequence[Bin] = (
+                self._select_full(
+                    session,
+                    and_(
+                        Bin.span_low >= normalized.range_low,
+                        Bin.span_high <= normalized.range_high,
+                        Bin.prefix_length > length,
+                    ),
+                    limit=limit,
+                )
+                .unique()
+                .scalars()
+                .all()
+            )
+            return [self._to_record(row) for row in rows]
 
     def exists(self, digits: str) -> bool:
         with self.session() as session:
@@ -157,20 +330,79 @@ class BinRepository(BaseRepository):
 
     def all_bins_for_institution(self, institution_id: int, limit: int = 100_000) -> list[BinRow]:
         """Every BIN for an institution — used by CSV/JSON export only."""
+        return self.all_bins_for_institutions([institution_id], limit=limit)
+
+    # -- multi-institution scope ------------------------------------------
+    #
+    # A portfolio spans an institution *and* the related institutions whose
+    # BINs belong to it — subsidiaries, predecessors, brands. These take a list
+    # so the caller can hand over the whole set in one query rather than
+    # issuing one per institution and stitching the pages together.
+
+    def page_for_institutions(
+        self,
+        institution_ids: Sequence[int],
+        request: PageRequest,
+        filters: BinFilters | None = None,
+    ) -> Page[BinRow]:
+        """One page of the BINs belonging to any of *institution_ids*."""
+        filters = filters or BinFilters()
+        if not institution_ids:
+            return Page(items=[], total=0, page=request.page, page_size=request.page_size)
         with self.session() as session:
+            # Standing is filtered on the *link*, not on the row: a BIN can be
+            # current for one institution and historical for another, and
+            # applying both would drop exactly the rows being asked for.
+            statement = self._row_statement(
+                _without_standing(filters), institution_ids
+            ).where(self._scope(institution_ids, filters))
+            statement = self._apply_sort(statement, request)
+            total = self.count_of(session, statement)
+            rows = session.execute(
+                statement.limit(request.page_size).offset(request.offset)
+            ).all()
+            return Page(
+                items=[self._to_row(row) for row in rows],
+                total=total,
+                page=request.page,
+                page_size=request.page_size,
+            )
+
+    def all_bins_for_institutions(
+        self,
+        institution_ids: Sequence[int],
+        filters: BinFilters | None = None,
+        *,
+        limit: int = 100_000,
+    ) -> list[BinRow]:
+        """Every BIN belonging to any of *institution_ids*, for export."""
+        if not institution_ids:
+            return []
+        with self.session() as session:
+            resolved = filters or BinFilters()
             statement = (
-                self._row_statement(BinFilters())
-                .where(
-                    Bin.id.in_(
-                        select(BinInstitution.bin_id).where(
-                            BinInstitution.institution_id == institution_id
-                        )
-                    )
-                )
+                self._row_statement(_without_standing(resolved), institution_ids)
+                .where(self._scope(institution_ids, resolved))
                 .order_by(Bin.bin.asc())
                 .limit(limit)
             )
             return [self._to_row(row) for row in session.execute(statement).all()]
+
+    @staticmethod
+    def _scope(institution_ids: Sequence[int], filters: BinFilters) -> Any:
+        """Restrict to BINs linked to any of the institutions.
+
+        The link's own currency is filtered here rather than on the row's
+        primary link, because a BIN can be current for one institution and
+        historical for another — asking for the historical view of a
+        predecessor should find it.
+        """
+        link = select(BinInstitution.bin_id).where(
+            BinInstitution.institution_id.in_(list(institution_ids))
+        )
+        if filters.is_current is not None:
+            link = link.where(BinInstitution.is_current.is_(filters.is_current))
+        return Bin.id.in_(link)
 
     def filter_options(self, institution_id: int | None = None) -> dict[str, list[tuple[str, str]]]:
         """Distinct filter values (code, label) for the table filter bar."""
@@ -301,14 +533,11 @@ class BinRepository(BaseRepository):
         return session.execute(statement)
 
     @staticmethod
-    def _row_statement(filters: BinFilters) -> Select[Any]:
+    def _row_statement(
+        filters: BinFilters, institution_ids: Sequence[int] | None = None
+    ) -> Select[Any]:
         """Flat projection for table rows — no ORM objects, no lazy loads."""
-        primary_link = (
-            select(BinInstitution.bin_id, func.min(BinInstitution.institution_id).label("inst_id"))
-            .where(BinInstitution.is_primary.is_(True))
-            .group_by(BinInstitution.bin_id)
-            .subquery()
-        )
+        primary_link = primary_link_subquery(institution_ids)
         primary_address = (
             select(
                 Address.institution_id.label("inst_id"),
@@ -318,21 +547,7 @@ class BinRepository(BaseRepository):
             .subquery()
         )
         statement = (
-            select(
-                Bin.id,
-                Bin.bin,
-                Network.display_name,
-                Bin.brand,
-                Bin.card_type,
-                Bin.funding_type,
-                Country.name,
-                Country.iso2,
-                Address.region,
-                Address.city,
-                Address.postal_code,
-                Institution.display_name,
-                Bin.status,
-            )
+            select(*row_columns(primary_link))
             .select_from(Bin)
             .outerjoin(Network, Bin.network_id == Network.id)
             .outerjoin(Country, Bin.country_id == Country.id)
@@ -351,6 +566,17 @@ class BinRepository(BaseRepository):
             statement = statement.where(Bin.funding_type == filters.funding_type)
         if filters.region:
             statement = statement.where(Address.region == filters.region)
+        if filters.prefix_length:
+            statement = statement.where(Bin.prefix_length == filters.prefix_length)
+        if filters.is_current is not None:
+            statement = statement.where(
+                primary_link.c.is_current.is_(True)
+                if filters.is_current
+                else or_(
+                    primary_link.c.is_current.is_(False),
+                    primary_link.c.is_current.is_(None),
+                )
+            )
         if filters.text:
             needle = f"%{filters.text.strip()}%"
             statement = statement.where(
@@ -422,22 +648,44 @@ class BinRepository(BaseRepository):
     def _to_record(cls, row: Bin) -> BinRecord:
         links = sorted(
             row.institution_links,
-            key=lambda link: (not link.is_primary, link.relationship_type, link.institution_id),
+            key=lambda link: (
+                not link.is_current,
+                not link.is_primary,
+                link.relationship_type,
+                link.institution_id,
+            ),
         )
         institutions = tuple(
             InstitutionSummary(
                 id=link.institution.id,
+                uid=link.institution.uid,
                 display_name=link.institution.display_name,
                 legal_name=link.institution.legal_name,
                 country=cls._country_dto(link.institution.country),
                 relationship_type=link.relationship_type,
                 is_primary=link.is_primary,
                 website=link.institution.website,
+                status=link.status,
+                is_current=bool(link.is_current),
+                effective_from=link.effective_from,
+                effective_to=link.effective_to,
+                confidence=link.confidence,
+                confidence_level=link.confidence_level,
             )
             for link in links
             if link.institution is not None
         )
-        primary = links[0].institution if links else None
+        # The address shown belongs to whichever institution the record is
+        # actually attributed to, which is not necessarily the first link.
+        primary_link = next(
+            (
+                link
+                for link in links
+                if link.institution is not None and link.is_current and link.is_primary
+            ),
+            links[0] if links else None,
+        )
+        primary = primary_link.institution if primary_link else None
         address = cls._pick_address(primary)
         country = cls._country_dto(row.country) or (
             cls._country_dto(primary.country) if primary else None
@@ -447,6 +695,8 @@ class BinRepository(BaseRepository):
             bin=row.bin,
             iin=row.iin or row.bin,
             iin_length=row.iin_length,
+            prefix_length=row.prefix_length or len(row.bin),
+            prefix_type=row.prefix_type,
             bin_range=None,
             network=cls._network_dto(row.network),
             brand=row.brand,
@@ -474,12 +724,18 @@ class BinRepository(BaseRepository):
             (
                 InstitutionSummary(
                     id=institution.id,
+                    uid=institution.uid,
                     display_name=institution.display_name,
                     legal_name=institution.legal_name,
                     country=cls._country_dto(institution.country),
-                    relationship_type="issuer",
+                    relationship_type=RelationshipType.ISSUER.value,
                     is_primary=True,
                     website=institution.website,
+                    status=row.status,
+                    is_current=bool(row.is_current),
+                    effective_from=row.effective_from,
+                    effective_to=row.effective_to,
+                    confidence=row.confidence,
                 ),
             )
             if institution is not None
@@ -490,6 +746,8 @@ class BinRepository(BaseRepository):
             bin=query,
             iin=query,
             iin_length=len(row.range_low),
+            prefix_length=len(query),
+            prefix_type=PrefixType.RANGE.value,
             bin_range=bin_normalizer.format_range(row.range_low, row.range_high),
             network=cls._network_dto(row.network),
             brand=row.brand,
@@ -508,21 +766,40 @@ class BinRepository(BaseRepository):
 
     @staticmethod
     def _to_row(row: Any) -> BinRow:
+        """Build a table row from a labelled projection.
+
+        Read by name rather than by position: two query builders share this
+        projection, and positional access silently mismatches the moment one
+        of them gains a column.
+        """
+        data = row._mapping
+        value = data["bin"]
+        length = data.get("prefix_length")
+        is_current = data.get("is_current")
         return BinRow(
-            id=row[0],
-            bin=row[1],
-            network=row[2],
-            brand=row[3],
-            card_type=_label(row[4]),
-            funding_type=_label(row[5]),
-            country=row[6],
-            country_code=row[7],
-            region=row[8],
-            city=row[9],
-            postal_code=row[10],
-            institution=row[11],
-            status=_label(row[12]),
+            id=data["id"],
+            bin=value,
+            network=data.get("network"),
+            brand=data.get("brand"),
+            card_type=_label(data.get("card_type")),
+            funding_type=_label(data.get("funding_type")),
+            country=data.get("country"),
+            country_code=data.get("country_code"),
+            region=data.get("region"),
+            city=data.get("city"),
+            postal_code=data.get("postal_code"),
+            institution=data.get("institution"),
+            status=_label(data.get("status")),
+            prefix_length=length or len(value),
+            prefix_type=data.get("prefix_type"),
+            is_current=True if is_current is None else bool(is_current),
+            relationship_type=data.get("relationship_type"),
         )
+
+
+def _without_standing(filters: BinFilters) -> BinFilters:
+    """The same filters with the standing clause removed."""
+    return filters.model_copy(update={"is_current": None})
 
 
 def _label(value: str | None) -> str | None:

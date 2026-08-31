@@ -1,0 +1,233 @@
+"""Interface smoke tests: every page builds, in every theme, on both plans.
+
+These construct real widgets on the offscreen Qt platform. They are not
+pixel tests -- they assert that the shell wires up, that paid surfaces gate on
+entitlements rather than plan names, and that no page holds database logic it
+should be asking a service for.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+pytestmark = pytest.mark.gui
+
+THEMES = ("midnight", "professional_light", "slate", "ocean", "graphite")
+
+
+def pump(milliseconds: int = 120) -> None:
+    """Run the event loop for a real interval, so queued work can land."""
+    from PyQt6.QtCore import QEventLoop, QTimer
+
+    loop = QEventLoop()
+    QTimer.singleShot(milliseconds, loop.quit)
+    loop.exec()
+
+
+def wait_until(predicate, *, timeout_ms: int = 6000) -> bool:
+    """Pump until *predicate* holds, or the deadline passes."""
+    from PyQt6.QtCore import QDeadlineTimer
+
+    deadline = QDeadlineTimer(timeout_ms)
+    while not deadline.hasExpired():
+        if predicate():
+            return True
+        pump(50)
+    return predicate()
+
+
+@pytest.fixture
+def themes(config, paths, qapp):
+    from app.ui.themes.theme_manager import ThemeManager
+
+    manager = ThemeManager(config, paths.themes_dir)
+    manager.apply("midnight", persist=False)
+    return manager
+
+
+@pytest.fixture
+def window(context, themes, qapp):
+    """A main window that never reaches the network during a test."""
+    from app.core.config import UpdateCheckMode
+    from app.ui.windows.main_window import MainWindow
+
+    settings = context.config.settings
+    settings.database.automatic_updates = False
+    settings.database.check_mode = UpdateCheckMode.MANUAL
+    settings.license.revalidate_on_startup = False
+    settings.privacy.telemetry_enabled = False
+
+    win = MainWindow(context, themes)
+    win.resize(1280, 800)
+    yield win
+    win.close()
+    win.deleteLater()
+    # Let any background lookup finish before the context closes the database.
+    from PyQt6.QtCore import QThreadPool
+
+    QThreadPool.globalInstance().waitForDone(5000)
+    pump(50)
+
+
+def test_every_navigation_entry_has_a_page(window):
+    from app.ui.widgets.sidebar import NAV_ITEMS
+
+    assert {item.key for item in NAV_ITEMS} <= set(window.pages)
+
+
+def test_every_page_can_be_shown(window, qapp):
+    for key in list(window.pages):
+        window.navigate(key)
+        pump(30)
+        assert window.pages[key].isVisible() or window.stack.currentWidget() is window.pages[key]
+
+
+@pytest.mark.parametrize("theme", THEMES)
+def test_every_theme_applies_cleanly(window, themes, theme, qapp):
+    themes.apply(theme, persist=False)
+    pump(30)
+    assert themes.current.name == theme
+    assert qapp.styleSheet()
+
+
+def test_a_bin_lookup_resolves_through_the_page(window, context, qapp):
+    from sqlalchemy import text
+
+    with context.manager.session() as session:
+        digits = str(session.execute(text("SELECT bin FROM bins LIMIT 1")).scalar())
+
+    page = window.bin_page
+    window.navigate("bin_lookup")
+    page.perform_search(digits)
+    assert wait_until(lambda: page.stack.currentWidget() is page.result_holder)
+    assert digits in page.result_card.bin_label.text().replace(" ", "")
+
+
+def test_the_bin_page_offers_quick_and_advanced_tabs(window):
+    page = window.bin_page
+    assert [page.tabs.tabText(i) for i in range(page.tabs.count())] == [
+        "Quick lookup",
+        "Advanced search",
+    ]
+
+
+def test_advanced_search_is_gated_on_the_free_plan(window):
+    from app.licensing.plans import Feature
+
+    window.navigate("bin_lookup")
+    page = window.bin_page
+    page.refresh()
+    granted = window.context.entitlements.has_feature(Feature.ADVANCED_SEARCH)
+    assert page.advanced_gate.unlocked is granted
+    assert not granted, "the fixture context is on the Free plan"
+
+
+def test_activating_a_plan_unlocks_the_gate(window, context, qapp):
+    from app.core.config import LicenseServiceMode
+
+    context.config.settings.license.service_mode = LicenseServiceMode.DEVELOPMENT
+    context.reconfigure_licensing()
+    context.licenses.activate("BINTEL-DEV-BUSINESS")
+    pump(30)
+
+    window.bin_page.refresh()
+    assert window.bin_page.advanced_gate.unlocked
+
+    window.navigate("analytics")
+    pump(60)
+    assert window.pages["analytics"].gate.unlocked
+
+
+def test_locked_pages_stay_visible_with_an_upgrade_prompt(window, qapp):
+    """A paid page is never hidden — it explains itself and stays usable."""
+    window.navigate("analytics")
+    pump(60)
+    page = window.pages["analytics"]
+    assert not page.gate.unlocked
+    assert page.gate.prompt.upgrade_button.text().startswith("Upgrade to")
+
+
+def test_the_sidebar_badges_paid_entries_rather_than_hiding_them(window):
+    from app.ui.widgets.sidebar import NAV_ITEMS
+
+    gated = [item for item in NAV_ITEMS if item.feature]
+    assert gated
+    for item in gated:
+        button = window.sidebar._buttons[item.key]
+        assert button.isEnabled(), "a paid entry stays usable, it is never disabled"
+        assert not button.isHidden(), "a paid entry is badged, never hidden"
+
+
+def test_an_ampersand_in_a_label_is_not_read_as_an_accelerator(window):
+    button = window.sidebar._buttons["license"]
+    assert "&&" in button.text() or "&" in button.item.label
+
+
+def test_the_command_palette_finds_a_page(window, qapp):
+    window.open_palette()
+    window.palette.field.setText("analytics")
+    assert wait_until(lambda: window.palette.list_widget.count() > 0)
+    window.palette.hide()
+
+
+def test_the_settings_page_exposes_every_tab(window):
+    tabs = window.settings_page.tabs
+    labels = [tabs.tabText(i) for i in range(tabs.count())]
+    assert labels == [
+        "General",
+        "Database",
+        "Updates",
+        "Appearance",
+        "Search",
+        "Watchlists",
+        "Reports",
+        "Licence",
+        "Privacy & Telemetry",
+        "Advanced",
+    ]
+
+
+def test_no_page_module_imports_the_orm_directly():
+    """Pages talk to services; database logic never leaks into a widget."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "app" / "ui"
+    offenders = []
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for marker in ("from sqlalchemy", "import sqlalchemy", "from app.models.entities import"):
+            if marker in text:
+                offenders.append(f"{path.relative_to(root)}: {marker}")
+    assert offenders == []
+
+
+def test_the_filter_bar_reflows_rather_than_widening_the_page(qapp):
+    """Filters have grown from five to seven; the page must not scroll sideways."""
+    from app.ui.widgets.data_table import FilterBar
+
+    bar = FilterBar()
+    try:
+        assert bar.minimumSizeHint().width() < 400
+        for width, expected in ((1400, 8), (700, 4), (400, 2)):
+            bar.resize(width, 40)
+            bar._relayout()
+            assert bar._columns == expected, (width, bar._columns)
+    finally:
+        bar.deleteLater()
+
+
+def test_the_result_card_states_how_a_match_was_reached(window, context, qapp):
+    from sqlalchemy import text
+
+    with context.manager.session() as session:
+        digits = str(session.execute(text("SELECT bin FROM bins LIMIT 1")).scalar())
+
+    page = window.bin_page
+    window.navigate("bin_lookup")
+    page.perform_search(digits)
+    assert wait_until(lambda: page.stack.currentWidget() is page.result_holder)
+
+    card = page.result_card
+    assert not card.match_label.isHidden()
+    assert "Match:" in card.match_label.text()
+    assert "Confidence:" in card.match_label.text()

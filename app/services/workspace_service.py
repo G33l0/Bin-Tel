@@ -11,6 +11,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from sqlalchemy import delete, func, select
 
@@ -397,7 +398,7 @@ class WorkspaceService:
         title: str,
         report_type: str,
         output_format: str,
-        path: str,
+        path: str | Path,
         *,
         row_count: int = 0,
         size_bytes: int = 0,
@@ -409,7 +410,7 @@ class WorkspaceService:
                     title=title[:256],
                     report_type=report_type,
                     output_format=output_format,
-                    path=path,
+                    path=str(path),
                     row_count=row_count,
                     size_bytes=size_bytes,
                     database_version=database_version,

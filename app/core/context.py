@@ -55,6 +55,8 @@ from app.services.database_service import DatabaseService
 from app.services.export_service import ExportService
 from app.services.health_service import DatabaseHealthService
 from app.services.lookup_service import LookupService
+from app.services.portfolio_service import PortfolioService
+from app.services.quality_service import DataQualityService
 from app.services.report_service import ReportService
 from app.services.search_service import SearchService
 from app.services.stats_service import StatsService
@@ -125,7 +127,9 @@ class AppContext:
         # -- core services --------------------------------------------------
         self.database = DatabaseService(self.manager, database_path)
         self.lookup = LookupService(self.bins)
-        self.banks = BankService(self.institutions, self.bins)
+        self.portfolios = PortfolioService(self.manager, self.bins)
+        self.quality = DataQualityService(self.manager)
+        self.banks = BankService(self.institutions, self.bins, self.portfolios)
         self.stats = StatsService(self.stats_repository, self.metadata, database_path)
         self.exports = ExportService()
         self.health = DatabaseHealthService(self.manager)
