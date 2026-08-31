@@ -254,7 +254,9 @@ class IngestService:
                 result.institutions_matched += 1
             # A later row may carry details the first one lacked (a legal name,
             # a website), so a cache hit still enriches and re-indexes aliases.
-            self._enrich_institution(cached, legal_name, website, swift_bic, country)
+            self._enrich_institution(
+                cached, legal_name, website, swift_bic, country, display=display
+            )
             self._add_aliases(cached, [*aliases, *self._legal_aliases(cached, legal_name)])
             return cached
 
@@ -270,7 +272,9 @@ class IngestService:
             self._institution_cache[cache_key] = match
             if result is not None:
                 result.institutions_matched += 1
-            self._enrich_institution(match, legal_name, website, swift_bic, country)
+            self._enrich_institution(
+                match, legal_name, website, swift_bic, country, display=display
+            )
             self._add_aliases(match, aliases)
             return match
 
@@ -303,6 +307,20 @@ class IngestService:
             ],
         )
         return institution
+
+    @staticmethod
+    def _is_fuller_name(incoming: str, existing: str) -> bool:
+        """Whether *incoming* is the same name, spelled out more completely.
+
+        Only true when the two normalise to the same thing — so this can never
+        rename an institution to a different one — and the incoming spelling
+        uses more words, which is what expanding an abbreviation does.
+        """
+        if not incoming or not existing or squash(incoming) == squash(existing):
+            return False
+        if name_normalizer.core_form(incoming) != name_normalizer.core_form(existing):
+            return False
+        return len(incoming.split()) > len(existing.split())
 
     @staticmethod
     def _legal_aliases(institution: Institution, legal_name: str | None) -> list[str]:
@@ -351,8 +369,21 @@ class IngestService:
         website: str | None,
         swift_bic: str | None,
         country: Country | None,
+        *,
+        display: str | None = None,
     ) -> None:
-        """Fill in blanks only — never overwrite an existing value."""
+        """Fill in blanks only — never overwrite an existing value.
+
+        The one exception is the display name: when a later row spells out a
+        name the first row abbreviated ("Northshore CU" then "Northshore Credit
+        Union"), the fuller spelling becomes the name shown and the shorter one
+        is kept as an alias. Naming institutions is what this application is
+        for, so the better name wins.
+        """
+        if display and self._is_fuller_name(display, institution.display_name):
+            previous = institution.display_name
+            institution.display_name = display
+            self._add_aliases(institution, [previous], AliasType.ABBREVIATION)
         if legal_name and not institution.legal_name:
             institution.legal_name = name_normalizer.clean_display(legal_name) or None
             institution.normalized_legal_name = (

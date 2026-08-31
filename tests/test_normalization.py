@@ -221,3 +221,111 @@ def test_a_dedupe_run_over_a_clean_package_finds_nothing_to_merge(manager):
     assert report.merged == []
     assert report.duplicate_bins == 0
     assert report.scanned_institutions > 0
+
+
+# -- ingest-time institution resolution ---------------------------------------
+
+
+@pytest.fixture
+def ingest_session(tmp_path):
+    """An empty database with the schema, ready to ingest into."""
+    from app.database.engine import DatabaseManager
+    from app.database.schema import create_schema
+
+    manager = DatabaseManager(tmp_path / "ingest.sqlite")
+    manager.open(create_if_missing=True)
+    create_schema(manager.engine)
+    session = manager.new_session()
+    try:
+        yield session
+    finally:
+        session.close()
+        manager.close()
+
+
+def _ingest(session):
+    from app.services.ingest_service import IngestService
+
+    service = IngestService(session, source_code="test", source_name="Test source")
+    service.seed_reference_data()
+    return service
+
+
+def test_an_abbreviation_and_its_expansion_become_one_institution(ingest_session):
+    service = _ingest(ingest_session)
+    first = service.ensure_institution(
+        "Northshore CU", country=service.ensure_country("US"), website="northshore.example"
+    )
+    second = service.ensure_institution(
+        "Northshore Credit Union",
+        country=service.ensure_country("US"),
+        website="northshore.example",
+    )
+    assert first is not None and second is not None
+    assert first.id == second.id
+
+
+def test_the_fuller_spelling_becomes_the_name_that_is_shown(ingest_session):
+    service = _ingest(ingest_session)
+    us = service.ensure_country("US")
+    service.ensure_institution("Northshore CU", country=us, website="northshore.example")
+    institution = service.ensure_institution(
+        "Northshore Credit Union", country=us, website="northshore.example"
+    )
+    assert institution is not None
+    assert institution.display_name == "Northshore Credit Union"
+
+
+def test_the_shorter_spelling_survives_as_an_alias(ingest_session):
+    from sqlalchemy import select
+
+    from app.models.entities import InstitutionAlias
+
+    service = _ingest(ingest_session)
+    us = service.ensure_country("US")
+    service.ensure_institution("Northshore CU", country=us, website="northshore.example")
+    institution = service.ensure_institution(
+        "Northshore Credit Union", country=us, website="northshore.example"
+    )
+    ingest_session.flush()
+
+    aliases = {
+        row.alias
+        for row in ingest_session.execute(
+            select(InstitutionAlias).where(
+                InstitutionAlias.institution_id == institution.id
+            )
+        ).scalars()
+    }
+    assert "Northshore CU" in aliases
+
+
+def test_a_shorter_name_never_replaces_a_fuller_one(ingest_session):
+    service = _ingest(ingest_session)
+    us = service.ensure_country("US")
+    service.ensure_institution(
+        "Northshore Credit Union", country=us, website="northshore.example"
+    )
+    institution = service.ensure_institution(
+        "Northshore CU", country=us, website="northshore.example"
+    )
+    assert institution is not None
+    assert institution.display_name == "Northshore Credit Union"
+
+
+def test_a_different_institution_is_never_renamed_over(ingest_session):
+    service = _ingest(ingest_session)
+    us = service.ensure_country("US")
+    first = service.ensure_institution("Meridian Trust Bank", country=us)
+    second = service.ensure_institution("Pacific Rim Banking Corporation", country=us)
+    assert first is not None and second is not None
+    assert first.id != second.id
+    assert first.display_name == "Meridian Trust Bank"
+
+
+def test_the_same_name_in_two_countries_stays_two_institutions(ingest_session):
+    service = _ingest(ingest_session)
+    us = service.ensure_institution("Northern Bank", country=service.ensure_country("US"))
+    jp = service.ensure_institution("Northern Bank", country=service.ensure_country("JP"))
+    assert us is not None and jp is not None
+    assert us.id != jp.id
