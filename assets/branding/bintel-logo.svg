@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 72" width="300" height="72" role="img" aria-label="Bin-Tel">
+  <title>Bin-Tel</title>
+  <defs>
+    <linearGradient id="btLogoShell" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#22C8B4"/>
+      <stop offset="55%" stop-color="#1E8FB0"/>
+      <stop offset="100%" stop-color="#2B4C9B"/>
+    </linearGradient>
+    <linearGradient id="btLogoCore" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#101A2B"/>
+      <stop offset="100%" stop-color="#0B1220"/>
+    </linearGradient>
+    <clipPath id="btLogoClip">
+      <path d="M36 6.6 62.4 21.3v29.4L36 65.4 9.6 50.7V21.3Z"/>
+    </clipPath>
+  </defs>
+
+  <g transform="translate(0,0)">
+    <path d="M36 6.6 62.4 21.3v29.4L36 65.4 9.6 50.7V21.3Z" fill="url(#btLogoShell)"/>
+    <path d="M36 12.2 57.6 24.2v23.6L36 59.8 14.4 47.8V24.2Z" fill="url(#btLogoCore)"/>
+    <g clip-path="url(#btLogoClip)" opacity="0.55">
+      <ellipse cx="36" cy="36" rx="27" ry="11" fill="none" stroke="#22C8B4" stroke-width="1.4"
+               transform="rotate(-24 36 36)" opacity="0.75"/>
+      <ellipse cx="36" cy="36" rx="27" ry="11" fill="none" stroke="#5B8DEF" stroke-width="1"
+               transform="rotate(24 36 36)" opacity="0.5"/>
+    </g>
+    <g fill="#F2F6FB">
+      <rect x="22" y="25.5" width="20" height="4.2" rx="2.1"/>
+      <rect x="22" y="33.9" width="26" height="4.2" rx="2.1" opacity="0.92"/>
+      <rect x="22" y="42.3" width="14" height="4.2" rx="2.1" opacity="0.72"/>
+    </g>
+    <circle cx="48" cy="44.4" r="4.4" fill="#22C8B4"/>
+    <circle cx="48" cy="44.4" r="1.7" fill="#0B1220"/>
+  </g>
+
+  <text x="80" y="42"
+        font-family="Inter, 'Segoe UI', 'SF Pro Display', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="30" font-weight="700" letter-spacing="-0.8" fill="currentColor">Bin<tspan
+        fill="#22C8B4">-</tspan>Tel</text>
+  <text x="82" y="59"
+        font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="10" font-weight="500" letter-spacing="2.6" fill="currentColor"
+        opacity="0.62">BIN / IIN INTELLIGENCE</text>
+</svg>

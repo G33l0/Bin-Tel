@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 300" width="520" height="300" role="img" aria-label="Bin-Tel">
+  <title>Bin-Tel splash</title>
+  <defs>
+    <linearGradient id="btSplashBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0C1322"/>
+      <stop offset="60%" stop-color="#111B2E"/>
+      <stop offset="100%" stop-color="#16233B"/>
+    </linearGradient>
+    <linearGradient id="btSplashShell" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#22C8B4"/>
+      <stop offset="55%" stop-color="#1E8FB0"/>
+      <stop offset="100%" stop-color="#2B4C9B"/>
+    </linearGradient>
+    <radialGradient id="btGlow" cx="50%" cy="42%" r="60%">
+      <stop offset="0%" stop-color="#22C8B4" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#22C8B4" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="btSplashClip">
+      <path d="M260 74 296 94v40l-36 20-36-20V94Z"/>
+    </clipPath>
+  </defs>
+
+  <rect width="520" height="300" rx="14" fill="url(#btSplashBg)"/>
+  <rect width="520" height="300" rx="14" fill="url(#btGlow)"/>
+
+  <!-- Faint latitude grid: worldwide coverage. -->
+  <g stroke="#7FA8C9" stroke-width="0.6" opacity="0.10" fill="none">
+    <ellipse cx="260" cy="150" rx="230" ry="70"/>
+    <ellipse cx="260" cy="150" rx="230" ry="120"/>
+    <ellipse cx="260" cy="150" rx="120" ry="140"/>
+    <line x1="30" y1="150" x2="490" y2="150"/>
+  </g>
+
+  <g>
+    <path d="M260 74 296 94v40l-36 20-36-20V94Z" fill="url(#btSplashShell)"/>
+    <path d="M260 82 289.5 98.5v33L260 148l-29.5-16.5v-33Z" fill="#0B1220"/>
+    <g clip-path="url(#btSplashClip)" opacity="0.5">
+      <ellipse cx="260" cy="114" rx="38" ry="15" fill="none" stroke="#22C8B4" stroke-width="1.4"
+               transform="rotate(-24 260 114)"/>
+      <ellipse cx="260" cy="114" rx="38" ry="15" fill="none" stroke="#5B8DEF" stroke-width="1"
+               transform="rotate(24 260 114)"/>
+    </g>
+    <g fill="#F2F6FB">
+      <rect x="243" y="102" width="24" height="5" rx="2.5"/>
+      <rect x="243" y="112" width="31" height="5" rx="2.5" opacity="0.92"/>
+      <rect x="243" y="122" width="17" height="5" rx="2.5" opacity="0.72"/>
+    </g>
+    <circle cx="277" cy="124.5" r="5.2" fill="#22C8B4"/>
+    <circle cx="277" cy="124.5" r="2" fill="#0B1220"/>
+  </g>
+
+  <text x="260" y="204" text-anchor="middle"
+        font-family="Inter, 'Segoe UI', 'SF Pro Display', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="40" font-weight="700" letter-spacing="-1" fill="#F2F6FB">Bin<tspan
+        fill="#22C8B4">-</tspan>Tel</text>
+  <text x="260" y="228" text-anchor="middle"
+        font-family="Inter, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
+        font-size="11" font-weight="500" letter-spacing="3" fill="#8FA6C4">WORLDWIDE BIN / IIN INTELLIGENCE</text>
+</svg>
