@@ -19,6 +19,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 if __package__ in (None, ""):  # pragma: no cover - direct-script execution
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -143,6 +144,8 @@ def cmd_import_data(args: argparse.Namespace) -> int:
         create_schema(manager.engine)
 
     try:
+        if args.stage and not args.dry_run:
+            return _import_through_staging(manager, options, source, args)
         if source.is_dir():
             batch = BatchImporter(options)
             print(f"Importing {len(batch.files())} file(s) from {source}…")
@@ -175,6 +178,60 @@ def cmd_import_data(args: argparse.Namespace) -> int:
             _refresh_record_count(manager)
     finally:
         manager.close()
+    return EXIT_OK
+
+
+def _import_through_staging(
+    manager: DatabaseManager,
+    options: Any,
+    source: Path,
+    args: argparse.Namespace,
+) -> int:
+    """Import via the staging layer — the default, and the safe path.
+
+    Records land in ``staging_records``, are normalized, validated and
+    resolved there, and only reach production once they pass. A source with
+    bad rows then spoils the staging table rather than the database people
+    are looking things up in.
+    """
+    from app.importers.batch import BatchImporter
+    from app.importers.registry import importer_for
+    from app.services.ingest_service import IngestService
+    from app.services.staging_service import StagingService
+
+    importer = (
+        BatchImporter(options) if source.is_dir() else importer_for(options, name=args.format)
+    )
+    print(f"Importing {source.name} through staging…")
+
+    session = manager.new_session()
+    try:
+        staging = StagingService(session)
+        ingest = IngestService(
+            session,
+            source_code=options.source_code,
+            source_name=options.source_name,
+        )
+        ingest.seed_reference_data()
+        report = staging.run(importer.iter_records(), ingest)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+    print(f"\n{report.summary}")
+    for note in dict.fromkeys(report.issues):
+        print(f"  · {note}")
+    if report.held:
+        print(
+            f"\n{report.held} record(s) held back. "
+            f"Inspect them with:\n  python -m app.cli staging --batch {report.batch_id}"
+        )
+    if report.promoted:
+        rebuild_indexes(manager.engine)
+        _refresh_record_count(manager)
     return EXIT_OK
 
 
@@ -606,6 +663,18 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--source-code", default="import", help="provenance code recorded internally")
     imp.add_argument("--source-name", default="File import")
     imp.add_argument("--create", action="store_true", help="create the database if missing")
+    imp.add_argument(
+        "--stage",
+        action="store_true",
+        default=True,
+        help="import through the staging layer (the default, and the safe path)",
+    )
+    imp.add_argument(
+        "--no-stage",
+        dest="stage",
+        action="store_false",
+        help="write straight to production, skipping validation and conflict checks",
+    )
     imp.set_defaults(func=cmd_import_data)
 
     ded = add("dedupe", "detect and resolve duplicate records")

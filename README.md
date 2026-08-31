@@ -112,7 +112,8 @@ id. See [docs/DATABASE.md](docs/DATABASE.md).
 python -m app.cli --help
 
 python -m app.cli init-db --database db.sqlite --db-version 2026.01.1
-python -m app.cli import-data --source data/issuers.csv --dedupe
+python -m app.cli import-data --source data/issuers.csv   # via staging
+python -m app.cli import-data --source data/issuers.csv --no-stage
 python -m app.cli verify-db --quick
 python -m app.cli stats --json
 python -m app.cli lookup 414720
@@ -143,7 +144,7 @@ python -m app.cli restore ./backups/bintel-2026.01.1.sqlite
 ## Development
 
 ```bash
-pytest                      # 298 tests
+pytest                      # 428 tests
 pytest -m "not gui"         # skip the offscreen interface tests
 ruff check app tests
 mypy app

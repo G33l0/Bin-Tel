@@ -63,6 +63,18 @@ FIELD_ALIASES: dict[str, str] = {
     "status": "status", "record_status": "status", "state_of_record": "status",
     "aliases": "aliases", "alias": "aliases", "other_names": "aliases",
     "confidence": "confidence",
+    # -- allocation kind and lifetime -------------------------------------
+    # A source that knows an allocation is an account range, or that a
+    # relationship ended, is telling us something the engine ranks on. Losing
+    # it would flatten a former issuer into a current one.
+    "range_type": "range_type", "allocation_type": "range_type",
+    "assignment_type": "range_type",
+    "effective_from": "effective_from", "valid_from": "effective_from",
+    "start_date": "effective_from", "from_date": "effective_from",
+    "effective_to": "effective_to", "valid_to": "effective_to",
+    "end_date": "effective_to", "to_date": "effective_to",
+    "relationship": "relationship", "relationship_type": "relationship",
+    "role": "relationship",
 }
 
 #: Nested shapes commonly used by JSON BIN APIs, flattened on the way in.

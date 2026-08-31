@@ -224,5 +224,17 @@ resolution is held for review. A repair the pipeline had to make — transposed
 range endpoints, say — is recorded rather than applied silently. A bad feed
 spoils the staging table, not the database people are looking things up in.
 
+This is the **default** path for `bin-tel-cli import-data`; `--no-stage`
+writes straight to production and skips the validation and conflict checks.
+Inspect what was held back with:
+
+```bash
+python -m app.cli staging --batch <batch id>
+```
+
+Sources can carry `effective_from` / `effective_to`, `relationship` and
+`allocation_type` columns, so a feed that knows an issuer changed, or that an
+allocation is an account range, does not have that flattened away on import.
+
 See [DATABASE.md](DATABASE.md) for the schema and
 [DEPLOYMENT.md](DEPLOYMENT.md) for the release pipeline that runs it.
