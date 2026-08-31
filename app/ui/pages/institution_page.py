@@ -286,6 +286,14 @@ class InstitutionIntelligencePage(BasePage):
         stats_worker.signals.result.connect(self.result_view.show_stats)
         run_in_background(stats_worker)
 
+        # The portfolio spans related institutions, history and ranges, so it
+        # is counted separately from the per-institution statistics.
+        portfolio_worker: Worker = Worker(
+            lambda identifier=match.id: self.context.banks.portfolio(identifier)
+        )
+        portfolio_worker.signals.result.connect(self.result_view.show_portfolio)
+        run_in_background(portfolio_worker)
+
         options_worker = FilterOptionsWorker(self.context.banks, match.id)
         options_worker.signals.result.connect(self.result_view.set_filter_options)
         run_in_background(options_worker)

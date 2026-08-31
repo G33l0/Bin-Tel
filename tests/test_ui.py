@@ -199,3 +199,35 @@ def test_no_page_module_imports_the_orm_directly():
             if marker in text:
                 offenders.append(f"{path.relative_to(root)}: {marker}")
     assert offenders == []
+
+
+def test_the_filter_bar_reflows_rather_than_widening_the_page(qapp):
+    """Filters have grown from five to seven; the page must not scroll sideways."""
+    from app.ui.widgets.data_table import FilterBar
+
+    bar = FilterBar()
+    try:
+        assert bar.minimumSizeHint().width() < 400
+        for width, expected in ((1400, 8), (700, 4), (400, 2)):
+            bar.resize(width, 40)
+            bar._relayout()
+            assert bar._columns == expected, (width, bar._columns)
+    finally:
+        bar.deleteLater()
+
+
+def test_the_result_card_states_how_a_match_was_reached(window, context, qapp):
+    from sqlalchemy import text
+
+    with context.manager.session() as session:
+        digits = str(session.execute(text("SELECT bin FROM bins LIMIT 1")).scalar())
+
+    page = window.bin_page
+    window.navigate("bin_lookup")
+    page.perform_search(digits)
+    assert wait_until(lambda: page.stack.currentWidget() is page.result_holder)
+
+    card = page.result_card
+    assert not card.match_label.isHidden()
+    assert "Match:" in card.match_label.text()
+    assert "Confidence:" in card.match_label.text()

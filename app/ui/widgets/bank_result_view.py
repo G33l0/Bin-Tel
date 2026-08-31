@@ -218,6 +218,16 @@ class BankResultView(QWidget):
         self.stats = StatsStrip(self)
         layout.addWidget(self.stats)
 
+        # What the listing below actually covers. A group's portfolio reaches
+        # through its subsidiaries and includes BINs it no longer issues, and
+        # a reader should not have to infer either from a row count.
+        self.portfolio_label = QLabel("", self)
+        self.portfolio_label.setProperty("role", "muted")
+        self.portfolio_label.setWordWrap(True)
+        self.portfolio_label.setAccessibleName("What this portfolio covers")
+        self.portfolio_label.hide()
+        layout.addWidget(self.portfolio_label)
+
         table_card = Card(self, padding=16, spacing=12)
         actions = QWidget(table_card)
         action_layout = hbox(actions, spacing=8)
@@ -273,6 +283,25 @@ class BankResultView(QWidget):
 
     def show_stats(self, stats: InstitutionStats) -> None:
         self.stats.show_stats(stats)
+
+    def show_portfolio(self, portfolio: object | None) -> None:
+        """State what the listing spans: related institutions, history, ranges."""
+        if portfolio is None or getattr(portfolio, "is_empty", True):
+            self.portfolio_label.hide()
+            return
+        parts = [portfolio.summary]
+        if portfolio.by_length:
+            parts.append(
+                "By length: "
+                + ", ".join(group.display for group in portfolio.by_length)
+            )
+        if portfolio.by_country:
+            parts.append(
+                "By country: "
+                + ", ".join(group.display for group in portfolio.by_country[:4])
+            )
+        self.portfolio_label.setText("  ·  ".join(parts))
+        self.portfolio_label.show()
 
     def show_page(self, page: Page[BinRow]) -> None:
         self.table.set_page(page)

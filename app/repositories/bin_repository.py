@@ -88,19 +88,28 @@ def row_columns(primary_link: Any) -> tuple[Any, ...]:
     )
 
 
-def primary_link_subquery() -> Any:
-    """The per-BIN primary relationship, with its standing and kind."""
-    return (
-        select(
-            BinInstitution.bin_id,
-            func.min(BinInstitution.institution_id).label("inst_id"),
-            func.max(BinInstitution.is_current).label("is_current"),
-            func.min(BinInstitution.relationship_type).label("relationship_type"),
-        )
-        .where(BinInstitution.is_primary.is_(True))
-        .group_by(BinInstitution.bin_id)
-        .subquery()
+def primary_link_subquery(institution_ids: Sequence[int] | None = None) -> Any:
+    """The per-BIN relationship that names a row, with its standing and kind.
+
+    When *institution_ids* is given the projection is restricted to those
+    institutions' own links. That matters on a portfolio view: a BIN a
+    predecessor used to issue is in the list *because of* that historical
+    link, and describing the row by whoever holds it now would say the
+    opposite of why it is there.
+    """
+    statement = select(
+        BinInstitution.bin_id,
+        func.min(BinInstitution.institution_id).label("inst_id"),
+        func.max(BinInstitution.is_current).label("is_current"),
+        func.min(BinInstitution.relationship_type).label("relationship_type"),
     )
+    if institution_ids:
+        statement = statement.where(
+            BinInstitution.institution_id.in_(list(institution_ids))
+        )
+    else:
+        statement = statement.where(BinInstitution.is_primary.is_(True))
+    return statement.group_by(BinInstitution.bin_id).subquery()
 
 
 class BinRepository(BaseRepository):
@@ -344,9 +353,9 @@ class BinRepository(BaseRepository):
             # Standing is filtered on the *link*, not on the row: a BIN can be
             # current for one institution and historical for another, and
             # applying both would drop exactly the rows being asked for.
-            statement = self._row_statement(_without_standing(filters)).where(
-                self._scope(institution_ids, filters)
-            )
+            statement = self._row_statement(
+                _without_standing(filters), institution_ids
+            ).where(self._scope(institution_ids, filters))
             statement = self._apply_sort(statement, request)
             total = self.count_of(session, statement)
             rows = session.execute(
@@ -372,7 +381,7 @@ class BinRepository(BaseRepository):
         with self.session() as session:
             resolved = filters or BinFilters()
             statement = (
-                self._row_statement(_without_standing(resolved))
+                self._row_statement(_without_standing(resolved), institution_ids)
                 .where(self._scope(institution_ids, resolved))
                 .order_by(Bin.bin.asc())
                 .limit(limit)
@@ -524,9 +533,11 @@ class BinRepository(BaseRepository):
         return session.execute(statement)
 
     @staticmethod
-    def _row_statement(filters: BinFilters) -> Select[Any]:
+    def _row_statement(
+        filters: BinFilters, institution_ids: Sequence[int] | None = None
+    ) -> Select[Any]:
         """Flat projection for table rows — no ORM objects, no lazy loads."""
-        primary_link = primary_link_subquery()
+        primary_link = primary_link_subquery(institution_ids)
         primary_address = (
             select(
                 Address.institution_id.label("inst_id"),

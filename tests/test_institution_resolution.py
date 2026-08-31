@@ -385,3 +385,22 @@ def test_recording_the_same_conflict_twice_does_not_duplicate_it(scenario_manage
             ).scalar()
             == 1
         )
+
+
+def test_a_portfolio_row_is_described_by_that_institutions_own_link(
+    portfolios, resolver
+):
+    """A BIN a predecessor used to issue must not read as currently theirs.
+
+    530001 is in Cascade's portfolio because Cascade *used to* issue it;
+    Meridian issues it now. Describing the row by whoever holds it today would
+    say the opposite of why it is in the list.
+    """
+    rows = portfolios.page(_id(resolver, CASCADE), PageRequest(page_size=50)).items
+    historical = [row for row in rows if row.bin == "530001"]
+    assert historical, "the historical BIN is part of the portfolio"
+    row = historical[0]
+    assert row.institution == CASCADE
+    assert not row.is_current
+    assert row.standing == "Historical"
+    assert row.relationship_type == "former_issuer"

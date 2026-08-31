@@ -26,7 +26,7 @@ from app.ui.models.bin_table_model import DEFAULT_HIDDEN, BinTableModel
 from app.ui.themes.icons import IconProvider
 from app.ui.widgets.cards import IconButton
 from app.ui.widgets.states import EmptyState
-from app.utils.qt_helpers import copy_to_clipboard, expanding_spacer, hbox, vbox
+from app.utils.qt_helpers import copy_to_clipboard, expanding_spacer, grid, hbox, vbox
 
 PAGE_SIZE_CHOICES = (25, 50, 100, 250, 500)
 
@@ -50,20 +50,29 @@ class FilterBar(QWidget):
     _FIXED_FIELDS = (
         (
             "standing",
-            "Current & historical",
+            "All records",
             (("Current only", True), ("Historical only", False)),
         ),
         (
             "length",
-            "Any BIN length",
+            "Any length",
             (("6-digit", 6), ("8-digit", 8)),
         ),
     )
 
+    #: Narrowest a filter combo is allowed to get before the bar reflows.
+    _COMBO_WIDTH = 148
+    _SPACING = 8
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = hbox(self, spacing=8)
+        # A grid rather than a row: filters have grown from five to seven and
+        # will grow again, and a fixed row would eventually push the whole page
+        # sideways. This reflows into as many columns as actually fit.
+        self._grid = grid(self, spacing=self._SPACING)
         self._combos: dict[str, QComboBox] = {}
+        self._ordered: list[QWidget] = []
+        self._columns = 0
         self._suspend = False
 
         for key, placeholder in self._FIELDS:
@@ -83,7 +92,7 @@ class FilterBar(QWidget):
             combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             combo.currentIndexChanged.connect(self._emit)
             self._combos[key] = combo
-            layout.addWidget(combo)
+            self._ordered.append(combo)
 
         # Standing and length are not data-derived, so their options are
         # known up front. Standing defaults to "both": a BIN an issuer used to
@@ -105,15 +114,49 @@ class FilterBar(QWidget):
             combo.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
             combo.currentIndexChanged.connect(self._emit)
             self._combos[key] = combo
-            layout.addWidget(combo)
-
-        layout.addItem(expanding_spacer())
+            self._ordered.append(combo)
 
         self.clear_button = QPushButton("Clear filters", self)
         self.clear_button.setProperty("variant", "ghost")
         self.clear_button.setEnabled(False)
         self.clear_button.clicked.connect(self.clear)
-        layout.addWidget(self.clear_button)
+        self._ordered.append(self.clear_button)
+        self._relayout(columns=len(self._ordered))
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        self._relayout()
+
+    def sizeHint(self):  # noqa: N802
+        hint = super().sizeHint()
+        # The natural width is one full row, but the bar is happy to be
+        # narrower, so it must not report the row width as a *minimum*.
+        return hint
+
+    def minimumSizeHint(self):  # noqa: N802
+        hint = super().minimumSizeHint()
+        hint.setWidth(self._COMBO_WIDTH * 2 + self._SPACING)
+        return hint
+
+    def _relayout(self, *, columns: int | None = None) -> None:
+        """Lay the controls out in as many columns as the width allows."""
+        if columns is None:
+            available = max(self.width(), self._COMBO_WIDTH)
+            columns = max(
+                2, (available + self._SPACING) // (self._COMBO_WIDTH + self._SPACING)
+            )
+            columns = min(columns, len(self._ordered))
+        if columns == self._columns:
+            return
+        self._columns = columns
+
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for index, widget in enumerate(self._ordered):
+            row, column = divmod(index, columns)
+            self._grid.addWidget(widget, row, column)
+        for column in range(columns):
+            self._grid.setColumnStretch(column, 1)
 
     def set_options(self, options: dict[str, list[tuple[str, str]]]) -> None:
         self._suspend = True
