@@ -27,9 +27,13 @@ _CONFIGURED = False
 _PAN_RE = re.compile(r"\b\d(?:[ -]?\d){12,18}\b")
 #: Obvious secret-bearing key/value pairs.
 _SECRET_RE = re.compile(
-    r"(?i)\b(cvv|cvc|cvv2|pin|password|passwd|secret|token|api[_-]?key|authorization)"
+    r"(?i)\b(cvv|cvc|cvv2|pin|password|passwd|secret|token|api[_-]?key)"
     r"\s*[:=]\s*\S+"
 )
+#: An authorization value is taken to the end of the line, because the token
+#: usually follows a scheme word ("Bearer abc…") and stopping at the first
+#: space would leave the credential itself in the log.
+_AUTH_RE = re.compile(r"(?i)\b(authorization|proxy-authorization)\s*[:=]\s*.+")
 #: ``track1=...`` / ``track2=...`` magnetic-stripe payloads.
 _TRACK_RE = re.compile(r"(?i)\btrack\s*[12]\s*[:=]\s*\S+")
 
@@ -37,6 +41,7 @@ _TRACK_RE = re.compile(r"(?i)\btrack\s*[12]\s*[:=]\s*\S+")
 def redact(text: str) -> str:
     """Remove anything that could be cardholder or credential data."""
     text = _SECRET_RE.sub(lambda m: f"{m.group(1)}=[redacted]", text)
+    text = _AUTH_RE.sub(lambda m: f"{m.group(1)}=[redacted]", text)
     text = _TRACK_RE.sub("track=[redacted]", text)
     return _PAN_RE.sub(_redact_digits, text)
 
