@@ -50,6 +50,7 @@ from app.database.schema import (
 from app.models.entities import DatabaseMetadata
 from app.services.bin_list import BinListReport, read_bin_list
 from app.services.dedupe_service import DedupeService
+from app.services.enrichment_service import EnrichmentReport, EnrichmentService
 from app.services.ingest_service import IngestResult, IngestService
 
 logger = get_logger(__name__)
@@ -82,6 +83,8 @@ class RebuildOutcome:
     conflicts: int = 0
     ranges: int = 0
     previous_path: Path | None = None
+    #: What the enrichment pass filled in from evidence already in the build.
+    enrichment: EnrichmentReport = field(default_factory=EnrichmentReport)
     problems: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
 
@@ -105,6 +108,8 @@ class RebuildOutcome:
             parts.append(f"{self.rejected:,} row(s) skipped")
         if self.conflicts:
             parts.append(f"{self.conflicts:,} conflict(s) recorded")
+        if self.enrichment.total:
+            parts.append(f"{self.enrichment.total:,} field(s) filled in")
         return " · ".join(parts)
 
 
@@ -125,6 +130,7 @@ class RebuildService:
         self._manager = manager
         self._database_path = database_path
         self._staging_dir = staging_dir or database_path.parent / "staging"
+        self._enrichment = EnrichmentReport()
 
     # -- paths --------------------------------------------------------------
     def set_paths(self, database_path: Path, staging_dir: Path | None = None) -> None:
@@ -204,6 +210,7 @@ class RebuildService:
         try:
             emit(f"Building {report.accepted:,} record(s)…")
             result = self._build_candidate(candidate, report, version, emit)
+            outcome.enrichment = self._enrichment
             outcome.institutions = result.institutions_created
             outcome.ranges = result.ranges_created
             outcome.conflicts = result.conflicts
@@ -299,6 +306,13 @@ class RebuildService:
                         session.commit()
                         emit(f"Building… {index:,} of {report.accepted:,}")
                 session.commit()
+
+            # Complete the record from what the build already knows, before
+            # anything is indexed or measured, so the figures describe the
+            # database that will actually be installed.
+            emit("Filling in what the list left blank…")
+            with manager.transaction() as session:
+                self._enrichment = EnrichmentService(session).run()
 
             with manager.transaction() as session:
                 dedupe = DedupeService(session)

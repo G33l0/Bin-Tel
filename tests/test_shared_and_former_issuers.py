@@ -365,3 +365,85 @@ def test_a_former_issuer_never_overwrites_a_current_records_attributes(tmp_path)
     assert best.issuer_name == MERIDIAN
     assert best.country is not None and best.country.iso2 == "GB"
     manager.close()
+
+
+# ---------------------------------------------------------------------------
+# Blocking stays proportional
+# ---------------------------------------------------------------------------
+
+
+def test_a_leading_word_shared_by_hundreds_does_not_become_quadratic(tmp_path):
+    """"First National …" must not put every institution in one bucket."""
+    from app.services.dedupe_service import DedupeReport, DedupeService
+
+    manager = DatabaseManager(tmp_path / "bintel.sqlite")
+    manager.open(create_if_missing=True)
+    create_schema(manager.engine)
+    with manager.session() as session:
+        ingest = IngestService(session, source_code="test", source_name="Test")
+        for index in range(200):
+            ingest.ingest(
+                RawBinRecord.model_validate(
+                    {"bin": f"41{index:04d}", "issuer": f"First National {index:03d}"}
+                )
+            )
+        session.commit()
+
+    with manager.session() as session:
+        report = DedupeReport()
+        DedupeService(session, dry_run=True).deduplicate_institutions(
+            report, merge=False
+        )
+    assert report.scanned_institutions == 200
+    assert report.blocks_skipped >= 1, "the oversized 'first' bucket should be skipped"
+    manager.close()
+
+
+def test_an_exact_name_duplicate_is_still_caught_in_a_large_bucket(tmp_path):
+    """Skipping a weak bucket must not cost a real duplicate.
+
+    Two spellings of one bank share the exact normalized-name key, which is
+    never skipped however crowded the leading-word bucket around them is.
+    """
+    from app.services.dedupe_service import DedupeReport, DedupeService
+
+    manager = DatabaseManager(tmp_path / "bintel.sqlite")
+    manager.open(create_if_missing=True)
+    create_schema(manager.engine)
+    with manager.session() as session:
+        ingest = IngestService(session, source_code="test", source_name="Test")
+        for index in range(200):
+            ingest.ingest(
+                RawBinRecord.model_validate(
+                    {"bin": f"41{index:04d}", "issuer": f"First National {index:03d}"}
+                )
+            )
+        # Two spellings of one bank, inside that same crowded "first" bucket.
+        ingest.ingest(
+            RawBinRecord.model_validate(
+                {"bin": "420000", "issuer": "First Meridian Trust", "country": "US"}
+            )
+        )
+        ingest.ingest(
+            RawBinRecord.model_validate(
+                {"bin": "420001", "issuer": "First Meridian Trust Inc", "country": "US"}
+            )
+        )
+        session.commit()
+
+    with manager.session() as session:
+        report = DedupeReport()
+        DedupeService(session, dry_run=True).deduplicate_institutions(
+            report, merge=False
+        )
+
+    considered = {
+        name
+        for candidate in (*report.review_candidates, *report.merged)
+        for name in (candidate.keep_name, candidate.merge_name)
+    }
+    assert "First Meridian Trust" in considered, (
+        "the pair sharing an exact normalized name was never compared"
+    )
+    assert report.blocks_skipped >= 1, "the crowded weak bucket should still be skipped"
+    manager.close()

@@ -144,6 +144,51 @@ column beside **Issuer**.
 
 ---
 
+## What gets filled in for you
+
+A hand-kept list is uneven: one row for a bank carries its website and city,
+the next three name the bank and nothing else. After every rebuild a pass fills
+those gaps — from evidence, never from invention.
+
+**From the same institution's other rows.** If any row says where a bank is,
+or what its website is, every BIN belonging to *that same institution* gets the
+same answer. Nothing is inferred: it is one fact, written once, applied where
+it already belonged. Case and spacing do not split a bank in two — `Cascade
+Federal Bank`, `cascade federal bank` and `CASCADE  FEDERAL  BANK` are one
+institution.
+
+**From the BIN's own digits, for the scheme only.** ISO/IEC 7812 and the
+schemes' published ranges settle which network a prefix belongs to, so a blank
+`network` is filled from the number: `4…` Visa, `51–55` and `2221–2720`
+Mastercard, `34`/`37` Amex, `3528–3589` JCB, `6011`/`644–649`/`65` Discover,
+`62` UnionPay, `300–305`/`36`/`38–39` Diners, `2200–2204` Mir.
+
+Where two schemes publish the same prefix, nothing is filled. `622126–622925`
+is claimed by both Discover and UnionPay, and the digits genuinely do not
+settle it, so the network stays Unknown and the rebuild says how many prefixes
+that happened to. State the network on those rows if you know it.
+
+**From the country, for the currency.** A known country supplies the currency
+when the row did not.
+
+### What is never filled in
+
+* **A website, address, phone number or legal name that appears nowhere.** It
+  stays Unknown. A plausible guess is worse than an honest gap.
+* **The card type or funding type.** Nothing about the digits establishes
+  credit versus debit.
+* **The issuer.** A BIN the list does not name stays unknown; a neighbouring
+  BIN's bank is never borrowed.
+* **Anything the list already states.** Every fill targets a blank — the list
+  is always the authority.
+
+Nothing is filled silently. Each rebuild reports what it filled and by which
+rule, and every value is written to the database's `normalization_events`
+table with the rule that produced it, so anything the database asserts can be
+traced back to the row or the published range it came from.
+
+---
+
 ## 6-digit and 8-digit BINs
 
 Both are first-class, and neither is derived from the other.

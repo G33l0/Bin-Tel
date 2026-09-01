@@ -357,12 +357,18 @@ class DatabasePage(BasePage):
         self.banner.show_message(
             f"Database {outcome.version} is live — {outcome.summary}", StateKind.SUCCESS
         )
+        lines: list[str] = []
+        if outcome.enrichment.total or outcome.enrichment.networks_ambiguous:
+            lines.append(f"Filled in from evidence: {outcome.enrichment.summary}")
+            lines.extend(f"• {example}" for example in outcome.enrichment.examples[:8])
         if outcome.problems:
+            if lines:
+                lines.append("")
+            lines.append(f"{outcome.rejected:,} row(s) in the list were skipped:")
+            lines.extend(f"• {problem}" for problem in outcome.problems[:12])
+        if lines:
             self.report_card.show()
-            self.report_label.setText(
-                f"{outcome.rejected:,} row(s) in the list were skipped:\n"
-                + "\n".join(f"• {problem}" for problem in outcome.problems[:12])
-            )
+            self.report_label.setText("\n".join(lines))
         self.navigation_requested.emit("__database_reloaded__")
 
     def _on_rebuild_failed(self, exc: BaseException) -> None:

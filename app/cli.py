@@ -285,6 +285,7 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             ("Duplicates superseded", f"{outcome.duplicates:,}"),
             ("Rows skipped", f"{outcome.rejected:,}"),
             ("Conflicts recorded", f"{outcome.conflicts:,}"),
+            ("Filled in from evidence", outcome.enrichment.summary),
             ("Replaced version", outcome.previous_version or "none"),
             ("Rollback available", "yes" if outcome.can_roll_back else "no"),
             ("Elapsed", f"{outcome.elapsed_seconds:.1f}s"),

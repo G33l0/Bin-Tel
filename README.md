@@ -45,6 +45,7 @@ only. Log output is passed through a redaction filter before it is written.
 | **Report Centre** | CSV, JSON, TXT, PDF and XLSX, with reusable templates. |
 | **Database Administration** | A measured health score, integrity checks, reindex, vacuum, orphan removal, backup and restore. |
 | **Your own BIN list** | The database is built from one file you maintain, [`data/bin-list.csv`](docs/BIN_LIST.md). Add rows, rebuild, done. |
+| **Gaps filled from evidence** | A blank network comes from the BIN's published range; a bank's country and website reach all of its BINs. Never a guessed website, card type or issuer — those stay Unknown. |
 | **Reversible rebuilds** | The database a rebuild replaces is kept, so a bad list is one command away from undone. |
 | **Updates** | Verified, atomic database installs with automatic rollback. |
 | **Five themes** | Midnight, Professional Light, Slate, Ocean and Graphite — every surface, every page. |
