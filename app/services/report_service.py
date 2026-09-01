@@ -31,6 +31,7 @@ from app.core.logging_config import get_logger, log_event
 from app.models.schemas import AdvancedQuery, BinRecord, BinRow, InstitutionDetail
 from app.services.analytics_service import AnalyticsSnapshot
 from app.services.health_service import HealthReport
+from app.utils.csv_safety import escape_row, escape_rows
 from app.utils.formatting import format_bytes, format_datetime, format_number
 
 logger = get_logger(__name__)
@@ -525,26 +526,26 @@ class ReportService:
         writer.writerow(["Generated", content.generated_at.strftime("%Y-%m-%d %H:%M UTC")])
         writer.writerow(["Database version", content.database_version or "unknown"])
         if content.subtitle:
-            writer.writerow(["Subject", content.subtitle])
+            writer.writerow(escape_row(["Subject", content.subtitle]))
         if content.criteria:
             writer.writerow([])
             writer.writerow(["Search criteria"])
-            writer.writerows(content.criteria)
+            writer.writerows(escape_rows(content.criteria))
         if content.summary:
             writer.writerow([])
             writer.writerow(["Summary"])
-            writer.writerows(content.summary)
+            writer.writerows(escape_rows(content.summary))
         for heading, rows in content.detail_sections:
             writer.writerow([])
-            writer.writerow([heading])
-            writer.writerows(rows)
+            writer.writerow(escape_row([heading]))
+            writer.writerows(escape_rows(rows))
         if content.table_columns:
             writer.writerow([])
-            writer.writerow(content.table_columns)
-            writer.writerows(content.table_rows)
+            writer.writerow(escape_row(content.table_columns))
+            writer.writerows(escape_rows(content.table_rows))
         for note in content.notes:
             writer.writerow([])
-            writer.writerow([note])
+            writer.writerow(escape_row([note]))
         return buffer.getvalue()
 
     def _render_text(self, content: ReportContent) -> str:

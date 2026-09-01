@@ -105,7 +105,7 @@ class NavButton(QPushButton):
         self._collapsed = collapsed
         self._apply_text()
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._apply_text()
 

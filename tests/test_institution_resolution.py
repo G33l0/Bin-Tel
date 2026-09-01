@@ -16,7 +16,6 @@ from tests.fixtures.scenarios import (
     CASCADE_SUB,
     MERIDIAN,
     MERIDIAN_LEGAL,
-    NORTHSHORE,
     PACIFIC,
 )
 

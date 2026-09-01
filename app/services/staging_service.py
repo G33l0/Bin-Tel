@@ -322,6 +322,6 @@ def _restore(payload: str | None) -> RawBinRecord | None:
         return None
     try:
         return RawBinRecord.model_validate_json(payload)
-    except Exception:  # noqa: BLE001 - a malformed payload is a rejection
+    except Exception:
         logger.debug("A staged payload could not be restored", exc_info=True)
         return None

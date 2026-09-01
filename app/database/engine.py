@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Engine, event, create_engine
+from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.errors import DatabaseError, DatabaseMissingError
@@ -153,7 +153,7 @@ class DatabaseManager:
                         # Fold the WAL back into the main file so the database
                         # can be copied or replaced safely.
                         connection.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE)")
-                except Exception:  # noqa: BLE001 - closing must never raise
+                except Exception:
                     logger.debug("WAL checkpoint on close was not possible", exc_info=True)
                 self._engine.dispose()
                 logger.info("Database closed")

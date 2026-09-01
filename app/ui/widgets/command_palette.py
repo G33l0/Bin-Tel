@@ -223,7 +223,7 @@ class CommandPalette(QDialog):
         self.move(x, y)
 
     # -- input -------------------------------------------------------------
-    def eventFilter(self, source: QObject | None, event: QEvent | None) -> bool:  # noqa: N802
+    def eventFilter(self, source: QObject | None, event: QEvent | None) -> bool:
         """Route arrow keys to the list while the field keeps focus."""
         if source is self.field and isinstance(event, QKeyEvent) and event.type() == QEvent.Type.KeyPress:
             key = event.key()

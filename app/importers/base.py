@@ -285,7 +285,7 @@ class BaseImporter(ABC):
             return None
         try:
             return RawBinRecord.model_validate(dict(mapped))
-        except Exception:  # noqa: BLE001 - one bad row must not stop the run
+        except Exception:
             return None
 
 

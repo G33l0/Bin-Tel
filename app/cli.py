@@ -928,7 +928,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
         return EXIT_ERROR
-    except Exception as exc:  # noqa: BLE001 - a CLI should not print a traceback
+    except Exception as exc:
         logger.exception("CLI command failed")
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR

@@ -199,7 +199,7 @@ def read_schema_version(engine: Engine) -> int | None:
                 text("SELECT value FROM database_metadata WHERE key = :key"),
                 {"key": DatabaseMetadata.SCHEMA_VERSION},
             ).scalar()
-        except Exception:  # noqa: BLE001 - table may not exist yet
+        except Exception:
             return None
     try:
         return int(value) if value is not None else None

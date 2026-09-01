@@ -115,7 +115,7 @@ class BarChart(QWidget):
             return []
         return self._distribution.top(self._max_bars)
 
-    def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: N802 - Qt API
+    def paintEvent(self, event: QPaintEvent | None) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         metrics = ChartMetrics.current()
@@ -187,7 +187,7 @@ class BarChart(QWidget):
                 )
         painter.end()
 
-    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802 - Qt API
+    def mouseMoveEvent(self, event: QMouseEvent | None) -> None:
         if event is None:
             return
         index = int(event.position().y() // self._row_height)
@@ -200,12 +200,12 @@ class BarChart(QWidget):
                 self.setToolTip(f"{item.label}: {format_number(item.value)}")
             self.update()
 
-    def leaveEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+    def leaveEvent(self, event: object) -> None:
         self._hover_index = -1
         self.update()
         super().leaveEvent(event)  # type: ignore[arg-type]
 
-    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802 - Qt API
+    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:
         rows = self._rows()
         if event is not None and 0 <= self._hover_index < len(rows):
             key = rows[self._hover_index].key
@@ -230,7 +230,7 @@ class DonutChart(QWidget):
         self.setAccessibleName(distribution.title if distribution else "Chart with no data")
         self.update()
 
-    def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: N802 - Qt API
+    def paintEvent(self, event: QPaintEvent | None) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         metrics = ChartMetrics.current()
@@ -310,7 +310,7 @@ class SparkArea(QWidget):
         self.setAccessibleName(f"Database growth across {len(points)} period(s)")
         self.update()
 
-    def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: N802 - Qt API
+    def paintEvent(self, event: QPaintEvent | None) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         metrics = ChartMetrics.current()
@@ -409,7 +409,7 @@ class HealthGauge(QWidget):
         self.setAccessibleName(f"Database health {int(self._score * 100)} percent, {grade}")
         self.update()
 
-    def paintEvent(self, event: QPaintEvent | None) -> None:  # noqa: N802 - Qt API
+    def paintEvent(self, event: QPaintEvent | None) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         metrics = ChartMetrics.current()

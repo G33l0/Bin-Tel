@@ -382,7 +382,7 @@ class ReportsPage(BasePage):
                 destination = destination.with_suffix(fmt.extension)
             try:
                 result = self.context.reports.generate(content, fmt, destination)
-            except Exception as exc:  # noqa: BLE001 - shown in a dialog
+            except Exception as exc:
                 self.show_error(exc)
                 return
             self.context.workspace.record_report(
@@ -472,7 +472,7 @@ class ReportsPage(BasePage):
             self.format_combo.setCurrentIndex(index)
         try:
             query = AdvancedQuery.model_validate_json(template.criteria)
-        except Exception:  # noqa: BLE001 - a bad template must not break the page
+        except Exception:
             query = AdvancedQuery()
         for combo, value in (
             (self.country_combo, query.country_code),

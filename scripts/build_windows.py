@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from build_common import ICON_DIR, BuildTarget, add_common_arguments, run_build  # noqa: E402
+from build_common import ICON_DIR, BuildTarget, add_common_arguments, run_build
 
 
 def main(argv: list[str] | None = None) -> int:

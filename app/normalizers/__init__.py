@@ -1,6 +1,11 @@
 """Normalization services for BINs, names, geography, networks and card data."""
 
-from app.normalizers.bin_normalizer import BinNormalizer, NormalizedBin, NormalizedRange, bin_normalizer
+from app.normalizers.bin_normalizer import (
+    BinNormalizer,
+    NormalizedBin,
+    NormalizedRange,
+    bin_normalizer,
+)
 from app.normalizers.card_normalizer import CardNormalizer, card_normalizer
 from app.normalizers.confidence import (
     MERGE_THRESHOLD,

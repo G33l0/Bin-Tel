@@ -16,7 +16,6 @@ from app.models.schemas import (
     PageRequest,
 )
 from app.models.user_entities import FavoriteKind, SearchKind, WatchTargetType
-from app.services.export_service import ExportFormat
 from app.ui.dialogs.export_dialog import ExportDialog
 from app.ui.dialogs.watchlist_dialog import AddToWatchlistDialog, CreateWatchlistDialog
 from app.ui.pages.base_page import BasePage
@@ -399,7 +398,7 @@ class BinLookupPage(BasePage):
         path, fmt = chosen
         try:
             self.context.exports.export_record(record, path, fmt)
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.toast(f"Exported to {path.name}")
@@ -500,7 +499,7 @@ class BinLookupPage(BasePage):
             path, fmt = chosen
             try:
                 self.context.exports.export_rows(rows, path, fmt, title="Search results")
-            except Exception as exc:  # noqa: BLE001 - shown in a dialog
+            except Exception as exc:
                 self.show_error(exc)
                 return
             self.toast(f"Exported {len(rows):,} record(s)")

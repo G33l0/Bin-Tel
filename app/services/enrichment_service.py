@@ -36,7 +36,6 @@ published range it came from.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -44,7 +43,6 @@ from sqlalchemy.orm import Session
 
 from app.core.logging_config import get_logger
 from app.models.entities import (
-    Address,
     Bin,
     BinInstitution,
     Country,

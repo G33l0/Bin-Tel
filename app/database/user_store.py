@@ -53,7 +53,7 @@ class UserDataStore:
     def engine(self) -> Engine:
         if self._engine is None:
             self.open()
-        assert self._engine is not None  # noqa: S101 - open() guarantees this
+        assert self._engine is not None
         return self._engine
 
     def open(self) -> Engine:

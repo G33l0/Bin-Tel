@@ -25,7 +25,6 @@ from app.core.constants import (
     APP_VERSION,
     MAX_SCHEMA_VERSION,
     MIN_SCHEMA_VERSION,
-    SCHEMA_VERSION,
 )
 from app.core.errors import (
     BinTelError,
@@ -451,7 +450,7 @@ class DatabaseUpdateService:
                 status="rolled_back" if backup_path else "failed",
             )
             raise
-        except Exception as exc:  # noqa: BLE001 - surfaced as a friendly error
+        except Exception as exc:
             emit(UpdateProgress(UpdateState.FAILED, "The update could not be completed."))
             logger.exception("Unexpected failure during database update")
             self._rollback(backup_path, reopened)
@@ -582,7 +581,7 @@ class DatabaseUpdateService:
                         notes=manifest.notes,
                     )
                 )
-        except Exception:  # noqa: BLE001 - lineage must never fail an update
+        except Exception:
             logger.debug("Could not record the database version row", exc_info=True)
 
     def _notify_installed(self, outcome: UpdateOutcome) -> None:
@@ -591,7 +590,7 @@ class DatabaseUpdateService:
             return
         try:
             self._on_installed(outcome)
-        except Exception:  # noqa: BLE001 - a hook must never break an update
+        except Exception:
             logger.exception("The post-install hook raised")
 
     def _stamp_metadata(self, manifest: DatabaseManifest, report: VerificationReport) -> None:
@@ -641,7 +640,7 @@ class DatabaseUpdateService:
                         message="Installed by the Bin-Tel desktop application.",
                     )
                 )
-        except Exception:  # noqa: BLE001 - history must never fail an update
+        except Exception:
             logger.debug("Could not write the in-database update history", exc_info=True)
 
     def _rollback(self, backup_path: Path | None, reopened: bool) -> None:
@@ -658,7 +657,7 @@ class DatabaseUpdateService:
                 self._manager.open(self._database_path)
             elif reopened and not self._manager.is_open:  # pragma: no cover - defensive
                 self._manager.open(self._database_path)
-        except Exception:  # noqa: BLE001 - rollback must never mask the cause
+        except Exception:
             logger.exception("Rollback after a failed update did not complete cleanly")
 
     # -- convenience ------------------------------------------------------

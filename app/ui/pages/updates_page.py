@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
 from app.core.constants import UNKNOWN_DISPLAY
 from app.core.errors import OfflineError, OperationCancelled
 from app.providers.manifest import DatabaseManifest
-from app.services.update_service import UpdateCheck, UpdateOutcome, UpdateProgress, UpdateState
+from app.services.update_service import UpdateCheck, UpdateOutcome, UpdateProgress
 from app.ui.pages.base_page import BasePage
 from app.ui.widgets.cards import Card, CardGrid, MetricCard, SectionHeader
 from app.ui.widgets.progress_panel import ProgressPanel
@@ -368,7 +368,7 @@ class UpdatesPage(BasePage):
         for card in self.cards.values():
             card.refresh_icon()
 
-    def closeEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+    def closeEvent(self, event: object) -> None:
         if self._install_worker is not None:
             self._install_worker.cancel()
         super().closeEvent(event)  # type: ignore[arg-type]

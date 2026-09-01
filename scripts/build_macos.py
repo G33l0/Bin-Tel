@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from build_common import (  # noqa: E402
+from build_common import (
     DIST_DIR,
     ICON_DIR,
     BuildTarget,

@@ -17,7 +17,7 @@ from app.utils.formatting import (
     format_number,
     format_relative,
 )
-from app.utils.qt_helpers import grid, hbox, vbox
+from app.utils.qt_helpers import grid, hbox
 from app.workers.base import Worker, run_in_background
 
 

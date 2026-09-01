@@ -16,14 +16,14 @@ from PyQt6.QtWidgets import (
 from app.core.errors import ValidationError
 from app.models.user_entities import WatchTargetType
 from app.services.report_service import ReportFormat
-from app.services.watchlist_service import WatchAlert, WatchedItem, WatchlistSummary
+from app.services.watchlist_service import WatchAlert, WatchlistSummary
 from app.ui.dialogs.confirm_dialog import ConfirmDialog
 from app.ui.dialogs.export_dialog import ExportDialog
 from app.ui.dialogs.watchlist_dialog import CreateWatchlistDialog
 from app.ui.pages.base_page import BasePage
 from app.ui.themes.icons import IconProvider
 from app.ui.widgets.adaptive_stack import AdaptiveStack
-from app.ui.widgets.cards import Card, Chip, SectionHeader
+from app.ui.widgets.cards import Card, SectionHeader
 from app.ui.widgets.states import EmptyState, StateBanner, StateKind
 from app.utils.formatting import format_datetime_with_relative, format_relative
 from app.utils.qt_helpers import expanding_spacer, hbox, vbox
@@ -367,7 +367,7 @@ class WatchlistsPage(BasePage):
         try:
             report_format = ReportFormat(fmt.value)
             result = self.context.reports.generate(content, report_format, path)
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.toast(f"Exported to {result.path.name}")

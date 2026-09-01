@@ -559,7 +559,7 @@ class IngestService:
         result.processed += 1
         try:
             normalized = bin_normalizer.normalize(raw.bin)
-        except Exception as exc:  # noqa: BLE001 - a bad row must not abort a run
+        except Exception as exc:
             result.skipped += 1
             result.errors.append(f"{raw.bin!r}: {exc}")
             return "skipped"
@@ -870,7 +870,7 @@ class IngestService:
     ) -> None:
         try:
             normalized = bin_normalizer.normalize_range(low, raw.bin_high)
-        except Exception:  # noqa: BLE001 - malformed range is not fatal
+        except Exception:
             return
         existing = self._session.execute(
             select(BinRange).where(

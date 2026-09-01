@@ -41,14 +41,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.constants import (  # noqa: E402
+from app.core.constants import (
     APP_VERSION,
     MIN_SCHEMA_VERSION,
     SCHEMA_VERSION,
 )
-from app.database.engine import DatabaseManager  # noqa: E402
-from app.database.integrity import verify_database  # noqa: E402
-from app.database.schema import (  # noqa: E402
+from app.database.engine import DatabaseManager
+from app.database.integrity import verify_database
+from app.database.schema import (
     analyze,
     create_schema,
     list_indexes,
@@ -56,14 +56,14 @@ from app.database.schema import (  # noqa: E402
     vacuum,
     write_metadata,
 )
-from app.importers.base import ImportOptions  # noqa: E402
-from app.importers.batch import BatchImporter  # noqa: E402
-from app.importers.registry import importer_for  # noqa: E402
-from app.models.entities import DatabaseMetadata, DatabaseVersion  # noqa: E402
-from app.providers.compression import compress, normalise, suffix_for  # noqa: E402
-from app.services.dedupe_service import DedupeService  # noqa: E402
-from app.services.quality_service import DataQualityService  # noqa: E402
-from app.utils.hashing import file_checksum  # noqa: E402
+from app.importers.base import ImportOptions
+from app.importers.batch import BatchImporter
+from app.importers.registry import importer_for
+from app.models.entities import DatabaseMetadata, DatabaseVersion
+from app.providers.compression import compress, normalise, suffix_for
+from app.services.dedupe_service import DedupeService
+from app.services.quality_service import DataQualityService
+from app.utils.hashing import file_checksum
 
 STEP_WIDTH = 34
 

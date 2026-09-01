@@ -21,8 +21,8 @@ from app.utils.formatting import (
     format_number,
     format_relative,
 )
-from app.utils.qt_helpers import hbox, reveal_in_file_manager, vbox
-from app.workers.base import Worker, run_in_background
+from app.utils.qt_helpers import hbox, reveal_in_file_manager
+from app.workers.base import run_in_background
 from app.workers.maintenance_worker import (
     BackupWorker,
     RebuildWorker,
@@ -486,7 +486,7 @@ class DatabasePage(BasePage):
     def _on_restored(self) -> None:
         try:
             self.context.database.open()
-        except Exception as exc:  # noqa: BLE001 - reported to the user
+        except Exception as exc:
             self._on_failed(exc)
             return
         self._end()
@@ -498,7 +498,7 @@ class DatabasePage(BasePage):
         try:
             if self.context.database.is_installed:
                 self.context.database.open()
-        except Exception:  # noqa: BLE001 - the original error matters more
+        except Exception:
             pass
         self._on_failed(exc)
 

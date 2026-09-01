@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QComboBox, QLabel, QPushButton, QWidget
 
 from app.core.errors import ValidationError
@@ -11,7 +10,6 @@ from app.models.schemas import (
     BinFilters,
     BinRow,
     InstitutionDetail,
-    InstitutionStats,
     Page,
     PageRequest,
 )
@@ -376,7 +374,7 @@ class InstitutionIntelligencePage(BasePage):
             try:
                 report_format = ReportFormat(fmt.value)
                 result = self.context.reports.generate(content, report_format, path)
-            except Exception as exc:  # noqa: BLE001 - shown in a dialog
+            except Exception as exc:
                 self.show_error(exc)
                 return
             self.context.workspace.record_report(
@@ -425,7 +423,7 @@ class InstitutionIntelligencePage(BasePage):
             self.context.exports.export_rows(
                 rows, path, fmt, title=f"{self._current.display_name} — BIN records"
             )
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.toast(f"Exported {len(rows):,} record(s)")

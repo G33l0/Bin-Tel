@@ -34,9 +34,8 @@ from sqlalchemy.orm import Session
 
 from app.core.logging_config import get_logger
 from app.models.entities import Institution, InstitutionAlias
-from app.normalizers.confidence import MERGE_THRESHOLD, MatchScore
+from app.normalizers.confidence import MatchScore
 from app.normalizers.name_normalizer import name_normalizer
-from app.normalizers.text import squash
 
 logger = get_logger(__name__)
 

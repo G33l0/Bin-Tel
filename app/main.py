@@ -22,7 +22,7 @@ from pathlib import Path
 if __package__ in (None, ""):  # pragma: no cover - direct-script execution
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.constants import (  # noqa: E402
+from app.core.constants import (
     APP_ID,
     APP_NAME,
     APP_VERSION,
@@ -31,9 +31,9 @@ from app.core.constants import (  # noqa: E402
     ORG_NAME,
     PORTABLE_ENV_VAR,
 )
-from app.core.errors import BinTelError, friendly_message  # noqa: E402
-from app.core.logging_config import get_logger, log_event, setup_logging  # noqa: E402
-from app.core.paths import get_paths, reset_paths_cache  # noqa: E402
+from app.core.errors import BinTelError, friendly_message
+from app.core.logging_config import get_logger, log_event, setup_logging
+from app.core.paths import get_paths, reset_paths_cache
 
 logger = get_logger(__name__)
 
@@ -121,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     if manifest_override:
         try:
             config.settings.database.manifest_url = manifest_override
-        except Exception as exc:  # noqa: BLE001 - a bad override must not be fatal
+        except Exception as exc:
             logger.warning("Ignoring invalid manifest URL override: %s", exc)
 
     from PyQt6.QtWidgets import QApplication
@@ -241,7 +241,7 @@ def _run(application, context, themes, splash) -> int:
 
     try:
         return application.exec()
-    except Exception as exc:  # noqa: BLE001 - last line of defence
+    except Exception as exc:
         logger.exception("Unhandled exception in the Qt event loop")
         ErrorDialog(
             "Bin-Tel stopped unexpectedly",

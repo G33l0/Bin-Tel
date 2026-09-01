@@ -32,7 +32,13 @@ from app.normalizers.reference import (
     LEGAL_SUFFIXES,
     STOPWORDS,
 )
-from app.normalizers.text import collapse_whitespace, initialism, squash, strip_accents
+from app.normalizers.text import (
+    collapse_whitespace,
+    initialism,
+    sanitise_text,
+    squash,
+    strip_accents,
+)
 
 #: Suffixes sorted longest-first so "national association" wins over "na".
 _SUFFIX_TOKENS: tuple[tuple[str, ...], ...] = tuple(
@@ -100,7 +106,11 @@ class NameNormalizer:
     @staticmethod
     def clean_display(value: str) -> str:
         """Tidy a name for display without altering the words themselves."""
-        text = collapse_whitespace(value.replace(" ", " "))
+        # Control characters are stripped and the length bounded before
+        # anything else: a NUL is accepted by SQLite but truncates the
+        # value wherever C string handling meets it, and an unbounded
+        # paste would be stored whole despite the column declaring 256.
+        text = collapse_whitespace((sanitise_text(value) or "").replace(" ", " "))
         text = _PAREN.sub(lambda match: match.group(0), text)
         # Trim trailing punctuation left over from CSV exports.
         return text.strip(" ,;:-–—")

@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.core.constants import APP_ID, APP_NAME, APP_VERSION  # noqa: E402
+from app.core.constants import APP_NAME, APP_VERSION
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"

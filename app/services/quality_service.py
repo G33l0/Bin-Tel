@@ -31,7 +31,6 @@ from app.models.entities import (
     ConflictStatus,
     DataQualityMetric,
     Institution,
-    PrefixType,
 )
 
 logger = get_logger(__name__)
