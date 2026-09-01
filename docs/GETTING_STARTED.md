@@ -98,11 +98,21 @@ sudo apt install libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
 ## Step 5 — Put your BINs in the list
 
 This is the important one. **Bin-Tel starts with no data.** Its database is
-built from one file that you fill in:
+built from one CSV file that you fill in.
 
-```
-data/bin-list.csv
-```
+The easiest way: **start the app** (`python -m app.main`). The welcome screen
+appears, tells you the list is empty, and has an **Open my list** button that
+opens the file for you. It also has **Choose a CSV file…** if your list lives
+somewhere else already.
+
+The file itself lives in your own data folder, so it survives updates and you
+can always edit it:
+
+| Platform | Where |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Bin-Tel\bin-list.csv` |
+| macOS | `~/Library/Application Support/Bin-Tel/bin-list.csv` |
+| Linux | `~/.local/share/bintel/bin-list.csv` |
 
 Open it in any text editor (Notepad, TextEdit, VS Code — anything). You will
 see some `#` comment lines, and at the very bottom a line that reads:
@@ -137,6 +147,10 @@ Save the file.
 ---
 
 ## Step 6 — Build the database
+
+In the welcome screen, click **Build my database**. That is all.
+
+Prefer the terminal? This does the same thing:
 
 ```
 python -m app.cli rebuild
@@ -177,7 +191,7 @@ and the rest. If that works, the database is good.
 python -m app.main
 ```
 
-The window opens. Press `Ctrl+2` for BIN Lookup, type a BIN, press Enter.
+The main window opens (you already passed the welcome screen in Step 6). Press `Ctrl+2` for BIN Lookup, type a BIN, press Enter.
 
 That is it — you are running.
 
@@ -223,6 +237,8 @@ newer one — neither copy is thrown away.
 | `No database at …` | You have not built one yet. Run `python -m app.cli rebuild`. |
 | Rows "skipped" after a rebuild | Those lines could not be read. It gives the line number and reason for each. |
 | The app opens but every lookup is empty | The database was built from an empty or wrong list. Run `python -m app.cli check-list` to see what it can read. |
+| The welcome screen says it cannot reach a server | You are on an old version. `git pull` — the first run builds from your list and needs no server at all. |
+| The file picker will not let me select my CSV | Old version again. `git pull`. The picker now accepts `.csv`, `.tsv` and `.txt`. |
 
 Useful checks:
 

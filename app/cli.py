@@ -73,6 +73,13 @@ def _open(args: argparse.Namespace, *, create: bool = False) -> DatabaseManager:
     return manager
 
 
+def _resolve_bin_list() -> Path:
+    """The list the application is configured to build from."""
+    config = ConfigManager(get_paths())
+    config.load()
+    return config.bin_list_path()
+
+
 def _print_table(rows: list[tuple[str, str]], indent: str = "  ") -> None:
     if not rows:
         return
@@ -252,11 +259,10 @@ def _refresh_record_count(manager: DatabaseManager) -> None:
 
 def cmd_rebuild(args: argparse.Namespace) -> int:
     """Rebuild the whole database from the personal BIN list."""
-    from app.services.bin_list import default_bin_list_path
     from app.services.rebuild_service import RebuildService
 
     path = _resolve_database(args)
-    list_path = Path(args.list).expanduser() if args.list else default_bin_list_path()
+    list_path = Path(args.list).expanduser() if args.list else _resolve_bin_list()
 
     manager = DatabaseManager(path)
     if path.exists():
@@ -321,9 +327,9 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 def cmd_check_list(args: argparse.Namespace) -> int:
     """Read the BIN list and report on it without touching the database."""
-    from app.services.bin_list import default_bin_list_path, read_bin_list
+    from app.services.bin_list import read_bin_list
 
-    list_path = Path(args.list).expanduser() if args.list else default_bin_list_path()
+    list_path = Path(args.list).expanduser() if args.list else _resolve_bin_list()
     report = read_bin_list(list_path)
     print(f"{list_path}")
     _print_table(

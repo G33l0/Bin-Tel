@@ -155,11 +155,61 @@ class BinListReport:
         return " · ".join(parts)
 
 
-def default_bin_list_path() -> Path:
-    """``data/bin-list.csv`` beside the application or the repository."""
+#: The header a freshly seeded list carries. Two columns is a complete file.
+TEMPLATE_HEADER = "bin,bank\n"
+
+#: What a new list says, so an empty one explains itself.
+TEMPLATE_PREAMBLE = """\
+# Bin-Tel — your BIN list.
+#
+# The database is built from this file. Add one line per BIN below the
+# `bin,bank` line, then rebuild (Database → Rebuild from BIN list):
+#
+#     414720,Chase Bank
+#     37828224,American Express
+#
+# A BIN is 6 or 8 digits. Lines starting with # are ignored.
+# Never put a full card number, CVV or PIN in this file — anything longer
+# than 8 digits is refused on purpose.
+#
+"""
+
+
+def bundled_bin_list_path() -> Path:
+    """The read-only template shipped with the application, if there is one."""
     from app.core.paths import bundle_root
 
     return bundle_root() / "data" / BIN_LIST_FILENAME
+
+
+def seed_bin_list(path: Path) -> Path:
+    """Make sure *path* exists, copying the bundled template when it does not.
+
+    A packaged application unpacks its resources somewhere temporary, so the
+    shipped file is a template rather than the working copy. This puts a
+    writable one where the user can actually edit it.
+    """
+    if path.exists():
+        return path
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        template = bundled_bin_list_path()
+        if template.exists() and template.resolve() != path.resolve():
+            path.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            path.write_text(TEMPLATE_PREAMBLE + TEMPLATE_HEADER, encoding="utf-8")
+        logger.info("Seeded a BIN list at %s", path)
+    except OSError:  # pragma: no cover - a read-only volume is reported later
+        logger.warning("Could not create a BIN list at %s", path, exc_info=True)
+    return path
+
+
+def default_bin_list_path() -> Path:
+    """The working BIN list: the user's own copy, seeded if it is missing."""
+    from app.core.paths import get_paths
+
+    working = get_paths().data_dir / BIN_LIST_FILENAME
+    return seed_bin_list(working)
 
 
 def resolve_columns(header: list[str]) -> dict[int, str]:

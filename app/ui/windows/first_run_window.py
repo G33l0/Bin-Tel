@@ -1,9 +1,13 @@
 """The first-run experience.
 
-Bin-Tel does not ship the production database inside the installer, so the very
-first launch downloads it. This window is what the user sees until that has
-finished: a branded welcome, what will be downloaded, live progress, and clear
-recovery when something goes wrong.
+Bin-Tel builds its database from a BIN list the user maintains, so the first
+launch is a *build*, not a download. This window says so, shows what it found
+in the list, and builds — offline, from a file on this machine.
+
+Downloading a prepared package is still possible for anyone who has a manifest
+to point at, but it is the secondary path. Making it the primary one produced
+exactly the wall this window now exists to avoid: an application that cannot
+start because a server it does not need is unreachable.
 
 The main window is never shown before this completes.
 """
@@ -24,11 +28,13 @@ from PyQt6.QtWidgets import (
 
 from app.core.constants import APP_NAME, APP_VERSION
 from app.core.context import AppContext
-from app.core.errors import OfflineError
+from app.core.errors import BinTelError, OfflineError
 from app.core.logging_config import get_logger
 from app.core.paths import free_space, human_size
 from app.providers.local_provider import LocalPackageProvider
 from app.providers.manifest import DatabaseManifest
+from app.services.bin_list import read_bin_list
+from app.services.rebuild_service import RebuildOutcome
 from app.services.update_service import UpdateCheck, UpdateOutcome, UpdateProgress
 from app.ui.widgets.brand import BrandSplash
 from app.ui.widgets.cards import FieldRow
@@ -37,6 +43,7 @@ from app.ui.widgets.states import StateBanner, StateKind
 from app.utils.formatting import format_bytes, format_number
 from app.utils.qt_helpers import centered_paragraph, expanding_spacer, grid, hbox, vbox
 from app.workers.base import run_in_background
+from app.workers.maintenance_worker import RebuildWorker
 from app.workers.update_worker import UpdateCheckWorker, UpdateInstallWorker
 
 logger = get_logger(__name__)
@@ -70,9 +77,9 @@ class FirstRunWindow(QDialog):
         outer.addWidget(heading)
 
         message_block = centered_paragraph(
-            f"{APP_NAME} needs to download its local intelligence database before you "
-            "can begin. Once it is installed, every lookup runs offline from your own "
-            "machine.",
+            f"{APP_NAME} builds its database from your own BIN list — a plain CSV "
+            "file on this machine. Point it at your list and it will build one now. "
+            "Every lookup then runs offline.",
             self,
             max_width=520,
         )
@@ -90,21 +97,21 @@ class FirstRunWindow(QDialog):
 
         holder = QWidget(self.panel)
         self._facts = grid(holder, spacing=14)
-        self.version_row = FieldRow("Database version", "Checking…", holder, selectable=False)
+        self.list_row = FieldRow("Your BIN list", "Looking…", holder, selectable=False)
+        self.records_row = FieldRow("BINs ready to build", "—", holder, selectable=False)
+        self.version_row = FieldRow("Database version", "Not built yet", holder, selectable=False)
         self.size_row = FieldRow("Estimated size", "—", holder, selectable=False)
-        self.records_row = FieldRow("Records", "—", holder, selectable=False)
-        self.storage_row = FieldRow("Required storage", "—", holder, selectable=False)
-        self.connection_row = FieldRow("Internet connection", "Checking…", holder, selectable=False)
+        self.storage_row = FieldRow("Free space", "—", holder, selectable=False)
         self.location_row = FieldRow(
             "Install location", str(self.context.database_path.parent), holder, selectable=False
         )
         for index, row in enumerate(
             (
+                self.list_row,
+                self.records_row,
                 self.version_row,
                 self.size_row,
-                self.records_row,
                 self.storage_row,
-                self.connection_row,
                 self.location_row,
             )
         ):
@@ -123,11 +130,26 @@ class FirstRunWindow(QDialog):
         # -- actions ---------------------------------------------------------
         actions = hbox(spacing=10)
 
-        self.local_button = QPushButton("Use a local package…", self)
+        self.choose_button = QPushButton("Choose a CSV file…", self)
+        self.choose_button.setProperty("variant", "ghost")
+        self.choose_button.setToolTip(
+            "Point Bin-Tel at a BIN list anywhere on this machine. It needs a "
+            "`bin,bank` header and one line per BIN."
+        )
+        self.choose_button.clicked.connect(self._choose_bin_list)
+        actions.addWidget(self.choose_button)
+
+        self.open_list_button = QPushButton("Open my list", self)
+        self.open_list_button.setProperty("variant", "ghost")
+        self.open_list_button.setToolTip("Open the list in your text editor to add BINs.")
+        self.open_list_button.clicked.connect(self._open_bin_list)
+        actions.addWidget(self.open_list_button)
+
+        self.local_button = QPushButton("Use a package…", self)
         self.local_button.setProperty("variant", "ghost")
         self.local_button.setToolTip(
-            "Install from a database package you already have — useful on a machine "
-            "without internet access."
+            "Install from a prepared database package (a .json manifest) instead of "
+            "building from a list."
         )
         self.local_button.clicked.connect(self._choose_local_package)
         actions.addWidget(self.local_button)
@@ -144,7 +166,7 @@ class FirstRunWindow(QDialog):
         self.cancel_button.clicked.connect(self._cancel)
         actions.addWidget(self.cancel_button)
 
-        self.primary_button = QPushButton("Download Database", self)
+        self.primary_button = QPushButton("Build my database", self)
         self.primary_button.setProperty("variant", "primary")
         self.primary_button.setMinimumWidth(190)
         self.primary_button.setDefault(True)
@@ -154,7 +176,153 @@ class FirstRunWindow(QDialog):
 
         outer.addLayout(actions)
 
-        QTimer.singleShot(120, self.check)
+        # Read the list, not the network. Nothing here needs a server.
+        QTimer.singleShot(120, self.inspect_list)
+
+    # -- the BIN list ------------------------------------------------------
+    @property
+    def list_path(self) -> Path:
+        return self.context.config.bin_list_path()
+
+    def inspect_list(self) -> None:
+        """Read the list and say what can be built from it. No network at all.
+
+        Does nothing once a database exists: the startup timer that first calls
+        this can fire again while a build is running, and re-reading the list
+        would reset a finished window back to "Build my database".
+        """
+        if self._ready:
+            return
+        path = self.list_path
+        self.list_row.set_value(path.name)
+        self.list_row.setToolTip(str(path))
+        self.location_row.set_value(str(self.context.database_path.parent))
+
+        available = free_space(self.context.database_path.parent)
+        self.storage_row.set_value(
+            human_size(available) if available is not None else "Unknown"
+        )
+
+        try:
+            report = read_bin_list(path)
+        except BinTelError as exc:
+            self.records_row.set_value("None yet")
+            self.size_row.set_value("—")
+            self.primary_button.setEnabled(False)
+            self._advise(
+                f"{exc.message} {exc.detail or ''}".strip()
+                + "  Open your list, add a line per BIN, then press Try again.",
+                action="Try again",
+                handler=self.inspect_list,
+            )
+            return
+
+        self.records_row.set_value(f"{report.distinct_bins:,}")
+        # Roughly what a built database costs: enough to be useful, never
+        # presented as exact.
+        self.size_row.set_value(human_size(max(64_000, report.accepted * 900)))
+        self.banner.hide()
+        self.primary_button.setEnabled(True)
+        self.primary_button.setText("Build my database")
+        summary = report.summary
+        if report.rejected:
+            self._advise(
+                f"{report.rejected:,} line(s) could not be read and will be skipped: "
+                f"{report.problems[0]}",
+                kind=StateKind.WARNING,
+            )
+        logger.info("First run read the BIN list: %s", summary)
+
+    def _advise(
+        self,
+        message: str,
+        *,
+        kind: StateKind = StateKind.WARNING,
+        action: str = "",
+        handler=None,
+    ) -> None:
+        self.banner.show_message(message, kind, action_text=action)
+        try:
+            self.banner.action_triggered.disconnect()
+        except TypeError:
+            pass
+        if action and handler is not None:
+            self.banner.action_triggered.connect(handler)
+
+    def _choose_bin_list(self) -> None:
+        """Point at a CSV anywhere on this machine."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose your BIN list",
+            str(self.list_path.parent),
+            "BIN list (*.csv *.tsv *.txt);;All files (*)",
+        )
+        if not path:
+            return
+        self.context.config.set_bin_list_path(Path(path))
+        self.context.config.save_settings()
+        self.inspect_list()
+
+    def _open_bin_list(self) -> None:
+        """Open the list in whatever the platform uses for text files."""
+        from app.utils.qt_helpers import open_path
+
+        open_path(self.list_path)
+        self._advise(
+            "Add a line per BIN — for example `414720,Chase Bank` — then save the "
+            "file and press Try again.",
+            kind=StateKind.INFO,
+            action="Try again",
+            handler=self.inspect_list,
+        )
+
+    def _build_from_list(self) -> None:
+        self.banner.hide()
+        self.progress.setVisible(True)
+        self.progress.set_indeterminate("Building your database…")
+        self._set_busy(True)
+        worker = RebuildWorker(self.context.rebuilds, self.list_path)
+        worker.signals.progress.connect(
+            lambda message: self.progress.set_indeterminate(str(message))
+        )
+        worker.signals.result.connect(self._on_built)
+        worker.signals.failed.connect(self._on_build_failed)
+        run_in_background(worker)
+
+    def _on_built(self, outcome: RebuildOutcome) -> None:
+        self.progress.setVisible(False)
+        self._set_busy(False)
+        self._ready = True
+        self.version_row.set_value(outcome.version)
+        self.records_row.set_value(f"{outcome.distinct_bins:,}")
+        self._advise(
+            f"Your database is ready — {outcome.summary}",
+            kind=StateKind.SUCCESS,
+        )
+        self.primary_button.setText("Get Started")
+        self.primary_button.setEnabled(True)
+
+    def _on_build_failed(self, exc: BaseException) -> None:
+        self.progress.setVisible(False)
+        self._set_busy(False)
+        message = getattr(exc, "message", None) or str(exc)
+        detail = getattr(exc, "detail", None) or ""
+        self._advise(
+            f"{message} {detail}".strip(),
+            action="Try again",
+            handler=self.inspect_list,
+        )
+        self.primary_button.setEnabled(True)
+        logger.warning("First-run build failed: %s", exc)
+
+    def _set_busy(self, busy: bool) -> None:
+        for button in (
+            self.primary_button,
+            self.choose_button,
+            self.open_list_button,
+            self.local_button,
+        ):
+            button.setEnabled(not busy)
 
     # -- discovery --------------------------------------------------------
     def check(self) -> None:
@@ -232,10 +400,11 @@ class FirstRunWindow(QDialog):
         if self._ready:
             self.accept()
             return
-        if self._manifest is None:
-            self.check()
+        if self._manifest is not None:
+            # A package was chosen deliberately, so install that instead.
+            self._start_install()
             return
-        self._start_install()
+        self._build_from_list()
 
     def _start_install(self) -> None:
         if self._manifest is None or self._worker is not None:
@@ -328,7 +497,7 @@ class FirstRunWindow(QDialog):
             self,
             "Select a Bin-Tel database manifest",
             str(Path.home()),
-            "Database manifest (*.json)",
+            "Database manifest (*.json);;All files (*)",
         )
         if not path:
             return
