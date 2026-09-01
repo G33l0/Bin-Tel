@@ -54,7 +54,8 @@ only. Log output is passed through a redaction filter before it is written.
 
 ## Installing
 
-Bin-Tel needs Python 3.12 or newer.
+Bin-Tel needs Python 3.12 or newer. If you would rather be walked through it
+one step at a time, read [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 ```bash
 git clone https://github.com/G33l0/Bin-Tel.git
@@ -196,6 +197,7 @@ repositories, repositories own the SQL.** No page imports the ORM.
 
 | | |
 |---|---|
+| [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Nothing to a working app, one step at a time |
 | [BIN_LIST.md](docs/BIN_LIST.md) | The list your database is built from, and the rebuild loop |
 | [LOOKUP.md](docs/LOOKUP.md) | The lookup engine: allocations, specificity, confidence, conflicts |
 | [DATABASE.md](docs/DATABASE.md) | Schema, the two-database split, indexes, integrity, health |
