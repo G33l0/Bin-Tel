@@ -41,6 +41,7 @@ from app.services.health_service import DatabaseHealthService
 from app.services.lookup_service import LookupService
 from app.services.portfolio_service import PortfolioService
 from app.services.quality_service import DataQualityService
+from app.services.rebuild_service import RebuildService
 from app.services.report_service import ReportService
 from app.services.search_service import SearchService
 from app.services.stats_service import StatsService
@@ -96,6 +97,9 @@ class AppContext:
         self.workspace = WorkspaceService(self.user_store)
         self.search = SearchService(self.search_repository, self.workspace)
         self.reports = ReportService(self.config.reports_path())
+        self.rebuilds = RebuildService(
+            self.manager, database_path, staging_dir=self.paths.downloads_dir / "staging"
+        )
         self.change_detection = ChangeDetectionService(database_path)
         self.watchlists = WatchlistService(self.user_store, self.change_detection)
 
@@ -191,6 +195,7 @@ class AppContext:
         self.backups.set_paths(path, self.config.backups_path())
         self.updates.set_paths(path, self.paths.downloads_dir)
         self.change_detection.set_database_path(path)
+        self.rebuilds.set_paths(path, self.paths.downloads_dir / "staging")
         self.analytics.invalidate()
 
     def apply_settings(self) -> None:

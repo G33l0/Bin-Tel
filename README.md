@@ -4,9 +4,12 @@
 
 Bin-Tel resolves a Bank Identification Number to the institution that issued it,
 and tells you what that institution is: its legal name, country, network, card
-attributes and address. It runs entirely against a local, deduplicated SQLite
-database that you download once and update on your own schedule, so every
-lookup is instant and works offline.
+attributes and address. It runs entirely against a local SQLite database built
+from a BIN list you maintain yourself, so every lookup is instant and works
+offline.
+
+It is a personal research tool. There is no account, no licence, no telemetry
+and nothing phones home.
 
 ```
 python -m app.main
@@ -40,6 +43,8 @@ only. Log output is passed through a redaction filter before it is written.
 | **Institution Intelligence** | A full profile and portfolio analysis for one issuer. |
 | **Report Centre** | CSV, JSON, TXT, PDF and XLSX, with reusable templates. |
 | **Database Administration** | A measured health score, integrity checks, reindex, vacuum, orphan removal, backup and restore. |
+| **Your own BIN list** | The database is built from one file you maintain, [`data/bin-list.csv`](docs/BIN_LIST.md). Add rows, rebuild, done. |
+| **Reversible rebuilds** | The database a rebuild replaces is kept, so a bad list is one command away from undone. |
 | **Updates** | Verified, atomic database installs with automatic rollback. |
 | **Five themes** | Midnight, Professional Light, Slate, Ocean and Graphite — every surface, every page. |
 
@@ -68,13 +73,21 @@ pip install openpyxl       # XLSX reports
 
 ### First run
 
-Bin-Tel has no database when it first starts, so it offers to download one. The
-package is fetched, its SHA-256 checksum verified, opened and integrity-checked
-before it is installed. Nothing is written to the working database until the
-downloaded copy has passed every check.
+Bin-Tel has no database when it first starts. Build one from your BIN list:
 
-To try it without a distribution server, build a synthetic package and point
-Bin-Tel at it:
+1. put your BINs in `data/bin-list.csv` — at minimum a `bin,bank` header and one
+   row per BIN;
+2. run `python -m app.cli rebuild` (or, in the app, **Database → Rebuild from
+   BIN list**).
+
+That is the whole loop, and it is the same loop every time the list changes.
+The rebuild builds a complete new database in staging, verifies it, and only
+then swaps it in — so a rebuild that fails leaves what you had untouched, and
+one that succeeds keeps the database it replaced for `python -m app.cli
+rollback`. See [docs/BIN_LIST.md](docs/BIN_LIST.md) for the format and every
+rule the reader enforces.
+
+To try the interface with nothing of your own, build a synthetic package:
 
 ```bash
 python scripts/build_sample_database.py --output dist/database --bins 5000
@@ -111,6 +124,10 @@ id. See [docs/DATABASE.md](docs/DATABASE.md).
 ```bash
 python -m app.cli --help
 
+python -m app.cli rebuild                                  # from data/bin-list.csv
+python -m app.cli rebuild --list my-bins.csv --allow-shrink
+python -m app.cli rollback                                 # undo the last rebuild
+python -m app.cli check-list --strict                      # read the list, change nothing
 python -m app.cli init-db --database db.sqlite --db-version 2026.01.1
 python -m app.cli import-data --source data/issuers.csv   # via staging
 python -m app.cli import-data --source data/issuers.csv --no-stage
@@ -144,7 +161,7 @@ python -m app.cli restore ./backups/bintel-2026.01.1.sqlite
 ## Development
 
 ```bash
-pytest                      # 428 tests
+pytest                      # 430 tests
 pytest -m "not gui"         # skip the offscreen interface tests
 ruff check app tests
 mypy app
@@ -177,6 +194,7 @@ repositories, repositories own the SQL.** No page imports the ORM.
 
 | | |
 |---|---|
+| [BIN_LIST.md](docs/BIN_LIST.md) | The list your database is built from, and the rebuild loop |
 | [LOOKUP.md](docs/LOOKUP.md) | The lookup engine: allocations, specificity, confidence, conflicts |
 | [DATABASE.md](docs/DATABASE.md) | Schema, the two-database split, indexes, integrity, health |
 | [UPDATES.md](docs/UPDATES.md) | Manifests, the install pipeline, rollback, deltas |

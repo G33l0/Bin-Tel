@@ -115,7 +115,17 @@ class Resolution:
 
     @property
     def match_label(self) -> str:
-        return self.strategy.specificity.label
+        """How the winner was reached, naming the length that actually matched.
+
+        A root match is only a *six*-digit root when the winning assignment is
+        six digits long. A nine-digit query resolved by an eight-digit
+        assignment is an eight-digit prefix, and saying "6-digit root" there
+        would misdescribe the evidence.
+        """
+        if self.strategy is not LookupStrategy.ROOT_PREFIX or self.record is None:
+            return self.strategy.specificity.label
+        length = self.record.prefix_length or len(self.record.bin)
+        return f"{length}-digit prefix"
 
 
 class RangeResolver:

@@ -23,7 +23,14 @@ from app.utils.formatting import (
 )
 from app.utils.qt_helpers import hbox, reveal_in_file_manager, vbox
 from app.workers.base import Worker, run_in_background
-from app.workers.maintenance_worker import BackupWorker, ReindexWorker, RestoreWorker, VerifyWorker
+from app.workers.maintenance_worker import (
+    BackupWorker,
+    RebuildWorker,
+    ReindexWorker,
+    RestoreWorker,
+    RollbackWorker,
+    VerifyWorker,
+)
 
 
 class DatabasePage(BasePage):
@@ -101,6 +108,53 @@ class DatabasePage(BasePage):
         actions.body.addWidget(self.activity_label)
         self.content.addWidget(actions)
 
+        # -- the BIN list ----------------------------------------------------
+        source = Card(self.surface, padding=18, spacing=12)
+        source.body.addWidget(
+            SectionHeader(
+                "BIN list",
+                "Your database is built from this file. Add rows to it, rebuild, and "
+                "Bin-Tel is looking at the new data. The database it replaces is kept, "
+                "so a rebuild is always reversible.",
+                source,
+            )
+        )
+        self.list_path_label = QLabel("", source)
+        self.list_path_label.setProperty("role", "mono")
+        self.list_path_label.setStyleSheet("font-size: 10pt;")
+        self.list_path_label.setWordWrap(True)
+        self.list_path_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        source.body.addWidget(self.list_path_label)
+
+        self.list_status_label = QLabel("", source)
+        self.list_status_label.setProperty("role", "muted")
+        self.list_status_label.setWordWrap(True)
+        source.body.addWidget(self.list_status_label)
+
+        source_row = hbox(spacing=10)
+        for key, label, primary in (
+            ("rebuild", "Rebuild from BIN list", True),
+            ("check_list", "Check the list", False),
+            ("open_list", "Open the list", False),
+            ("rollback", "Roll back", False),
+        ):
+            button = QPushButton(label, source)
+            button.setProperty("variant", "primary" if primary else "")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(label)
+            self.buttons[key] = button
+            source_row.addWidget(button)
+        source_row.addStretch(1)
+        source.body.addLayout(source_row)
+        self.content.addWidget(source)
+
+        self.buttons["rebuild"].clicked.connect(self.rebuild_from_list)
+        self.buttons["check_list"].clicked.connect(self.check_list)
+        self.buttons["open_list"].clicked.connect(self.open_list_location)
+        self.buttons["rollback"].clicked.connect(self.roll_back)
+
         self.buttons["check"].clicked.connect(lambda: self.navigate("updates"))
         self.buttons["update"].clicked.connect(lambda: self.navigate("updates"))
         self.buttons["verify"].clicked.connect(self.verify_database)
@@ -155,6 +209,7 @@ class DatabasePage(BasePage):
             )
             self._set_maintenance_enabled(False)
             self._update_backup_summary()
+            self.refresh_list_status()
             return
 
         self.banner.hide()
@@ -180,6 +235,7 @@ class DatabasePage(BasePage):
         )
         self._set_maintenance_enabled(not self._busy)
         self._update_backup_summary()
+        self.refresh_list_status()
 
     def _update_backup_summary(self) -> None:
         backups = self.context.backups.list()
@@ -200,6 +256,13 @@ class DatabasePage(BasePage):
         for key in ("verify", "reindex", "backup"):
             self.buttons[key].setEnabled(enabled and installed)
         self.buttons["restore"].setEnabled(enabled and bool(self.context.backups.list()))
+        # A rebuild does not need a database to already exist — it is how the
+        # first one gets built — so it is gated on the list, not on `installed`.
+        for key in ("rebuild", "check_list", "open_list"):
+            self.buttons[key].setEnabled(enabled)
+        self.buttons["rollback"].setEnabled(
+            enabled and self.context.rebuilds.can_roll_back
+        )
 
     def _begin(self, message: str, *, determinate: bool = False) -> None:
         self._busy = True
@@ -244,6 +307,106 @@ class DatabasePage(BasePage):
             report.summary, StateKind.SUCCESS if report.ok else StateKind.DANGER
         )
         self.toast("Verification complete" if report.ok else "Verification found problems")
+
+    # -- the BIN list ------------------------------------------------------
+    @property
+    def list_path(self) -> Path:
+        from app.services.bin_list import default_bin_list_path
+
+        return default_bin_list_path()
+
+    def refresh_list_status(self) -> None:
+        """Describe the list without building anything from it."""
+        from app.core.errors import BinTelError
+        from app.services.bin_list import read_bin_list
+
+        path = self.list_path
+        self.list_path_label.setText(str(path))
+        self.buttons["rollback"].setEnabled(self.context.rebuilds.can_roll_back)
+        try:
+            report = read_bin_list(path)
+        except BinTelError as exc:
+            self.list_status_label.setText(f"{exc.message} {exc.detail or ''}".strip())
+            self.buttons["rebuild"].setEnabled(False)
+            return
+        self.list_status_label.setText(f"Ready to build — {report.summary}")
+        self.buttons["rebuild"].setEnabled(True)
+
+    def check_list(self) -> None:
+        self.refresh_list_status()
+        self.toast(self.list_status_label.text())
+
+    def open_list_location(self) -> None:
+        reveal_in_file_manager(self.list_path)
+
+    def rebuild_from_list(self, *, allow_shrink: bool = False) -> None:
+        self._begin("Rebuilding from the BIN list…")
+        worker = RebuildWorker(
+            self.context.rebuilds, self.list_path, allow_shrink=allow_shrink
+        )
+        worker.signals.progress.connect(self._on_rebuild_progress)
+        worker.signals.result.connect(self._on_rebuilt)
+        worker.signals.failed.connect(self._on_rebuild_failed)
+        run_in_background(worker)
+
+    def _on_rebuild_progress(self, message: object) -> None:
+        self.activity_label.setText(str(message))
+
+    def _on_rebuilt(self, outcome) -> None:
+        self._end()
+        self.banner.show_message(
+            f"Database {outcome.version} is live — {outcome.summary}", StateKind.SUCCESS
+        )
+        if outcome.problems:
+            self.report_card.show()
+            self.report_label.setText(
+                f"{outcome.rejected:,} row(s) in the list were skipped:\n"
+                + "\n".join(f"• {problem}" for problem in outcome.problems[:12])
+            )
+        self.navigation_requested.emit("__database_reloaded__")
+
+    def _on_rebuild_failed(self, exc: BaseException) -> None:
+        from app.services.rebuild_service import ShrinkRefused
+
+        self._end()
+        if isinstance(exc, ShrinkRefused):
+            # Losing most of the database is exactly the case worth stopping
+            # for, and exactly the case where only the person can say whether
+            # it was meant.
+            confirmed = ConfirmDialog.ask(
+                self,
+                "Rebuild with far fewer BINs?",
+                f"{exc.message}\n\n{exc.detail}",
+                confirm_text="Rebuild anyway",
+                destructive=True,
+            )
+            if confirmed:
+                self.rebuild_from_list(allow_shrink=True)
+            return
+        self.banner.show_message("The rebuild did not complete.", StateKind.DANGER)
+        self.show_error(exc)
+
+    def roll_back(self) -> None:
+        if not ConfirmDialog.ask(
+            self,
+            "Roll back to the previous database?",
+            "The database the last rebuild replaced becomes the active one again. "
+            "The current one is kept, so you can roll forward the same way.",
+            confirm_text="Roll back",
+        ):
+            return
+        self._begin("Rolling back…")
+        worker = RollbackWorker(self.context.rebuilds)
+        worker.signals.result.connect(self._on_rolled_back)
+        worker.signals.failed.connect(self._on_failed)
+        run_in_background(worker)
+
+    def _on_rolled_back(self, _path: Path) -> None:
+        self._end()
+        self.banner.show_message(
+            "Rolled back to the previous database.", StateKind.SUCCESS
+        )
+        self.navigation_requested.emit("__database_reloaded__")
 
     def rebuild_indexes(self) -> None:
         self._begin("Rebuilding indexes…")
