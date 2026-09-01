@@ -51,6 +51,10 @@ USER_AGENT: Final[str] = f"{APP_NAME}/{APP_VERSION} (+{WEBSITE_URL})"
 #: never needed to point the updater somewhere else.
 MANIFEST_URL_ENV_VAR: Final[str] = "BINTEL_MANIFEST_URL"
 
+#: binlist.net's public lookup service. Consulted only when the user turns it
+#: on and presses the button; never in the background.
+DEFAULT_BINLIST_ENDPOINT: Final[str] = "https://lookup.binlist.net"
+
 #: Values considered "no data". Presented to the user as ``Unknown``.
 UNKNOWN_DISPLAY: Final[str] = "Unknown"
 

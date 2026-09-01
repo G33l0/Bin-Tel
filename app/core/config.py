@@ -18,7 +18,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.core.constants import DEFAULT_MANIFEST_URL
+from app.core.constants import DEFAULT_BINLIST_ENDPOINT, DEFAULT_MANIFEST_URL
 from app.core.paths import AppPaths, get_paths
 
 
@@ -208,6 +208,31 @@ class PrivacySettings(_Section):
     remember_search_history: bool = True
 
 
+class ExternalSettings(_Section):
+    """Optional second opinions from services outside this machine.
+
+    Off by default, and Bin-Tel's own answers never depend on them. Turning one
+    on adds a button you press deliberately; nothing is consulted in the
+    background and nothing it returns is written into your database.
+    """
+
+    #: Consult binlist.net for a single BIN, on request. Their service allows
+    #: five lookups an hour, which Bin-Tel enforces locally rather than
+    #: discovering by being refused.
+    binlist_enabled: bool = False
+    binlist_endpoint: str = DEFAULT_BINLIST_ENDPOINT
+
+    @field_validator("binlist_endpoint")
+    @classmethod
+    def _validate_binlist_endpoint(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return DEFAULT_BINLIST_ENDPOINT
+        if not value.startswith("https://"):
+            raise ValueError("The binlist.net endpoint must start with https://")
+        return value
+
+
 class AdvancedSettings(_Section):
     log_level: LogLevel = LogLevel.INFO
     log_retention_days: int = Field(default=14, ge=1, le=365)
@@ -228,6 +253,7 @@ class Settings(BaseModel):
     watchlists: WatchlistSettings = Field(default_factory=WatchlistSettings)
     reports: ReportSettings = Field(default_factory=ReportSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
+    external: ExternalSettings = Field(default_factory=ExternalSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
 
     def to_json(self) -> str:
@@ -254,6 +280,7 @@ class Settings(BaseModel):
             "watchlists": WatchlistSettings,
             "reports": ReportSettings,
             "privacy": PrivacySettings,
+            "external": ExternalSettings,
             "advanced": AdvancedSettings,
         }
         for name, section_cls in section_types.items():

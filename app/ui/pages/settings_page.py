@@ -105,6 +105,7 @@ class SettingsPage(BasePage):
     database_path_changed = pyqtSignal()
     search_settings_changed = pyqtSignal()
     general_changed = pyqtSignal()
+    external_changed = pyqtSignal()
 
     def __init__(self, context, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -441,9 +442,35 @@ class SettingsPage(BasePage):
         self.network_label.setWordWrap(True)
         detail.body.addWidget(self.network_label)
         layout.addWidget(detail)
+
+        external = SettingsSection(
+            "Second opinions",
+            "Optional, off, and never automatic. Bin-Tel's own answers never "
+            "depend on these, and nothing they return is written to your "
+            "database — you decide what goes into your BIN list.",
+            page,
+        )
+        self.binlist_enabled = external.add_setting(
+            "Allow me to check a BIN against binlist.net",
+            QCheckBox(),
+            "Adds a button to the BIN Lookup page. It sends only the 6 or 8 BIN "
+            "digits, never a full card number, and only when you press it. "
+            "binlist.net allows five lookups an hour, which Bin-Tel keeps to.",
+        )
+        self.binlist_note = QLabel(
+            "binlist.net publishes no terms of use, and its data repository "
+            "carries no licence. It is fine to consult one BIN at a time; it is "
+            "not a source to copy in bulk, and Bin-Tel will not do so.",
+            external,
+        )
+        self.binlist_note.setWordWrap(True)
+        self.binlist_note.setProperty("role", "muted")
+        external.body.addWidget(self.binlist_note)
+        layout.addWidget(external)
         layout.addItem(expanding_spacer(horizontal=False))
 
         self.remember_search_history.toggled.connect(self._save_privacy)
+        self.binlist_enabled.toggled.connect(self._save_external)
         return page
 
     def _build_appearance(self) -> QWidget:
@@ -656,6 +683,7 @@ class SettingsPage(BasePage):
 
         privacy = settings.privacy
         self.remember_search_history.setChecked(privacy.remember_search_history)
+        self.binlist_enabled.setChecked(settings.external.binlist_enabled)
 
         appearance = settings.appearance
         self._populate_themes()
@@ -781,6 +809,18 @@ class SettingsPage(BasePage):
         privacy = self.context.config.settings.privacy
         privacy.remember_search_history = self.remember_search_history.isChecked()
         self._persist()
+
+    def _save_external(self) -> None:
+        if self._loading:
+            return
+        external = self.context.config.settings.external
+        external.binlist_enabled = self.binlist_enabled.isChecked()
+        self._persist(
+            "binlist.net lookups are available on the BIN Lookup page."
+            if external.binlist_enabled
+            else "binlist.net lookups are off."
+        )
+        self.external_changed.emit()
 
     def _choose_backup_directory(self) -> None:
         directory = QFileDialog.getExistingDirectory(

@@ -344,6 +344,57 @@ def cmd_check_list(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def cmd_binlist(args: argparse.Namespace) -> int:
+    """Ask binlist.net about one BIN. Nothing is written to the database."""
+    from app.providers.binlist import BinlistProvider, RateLimited, RequestBudget
+
+    config = ConfigManager(get_paths())
+    config.load()
+    settings = config.settings.external
+    if not settings.binlist_enabled and not args.force:
+        print(
+            "The binlist.net lookup is off. Turn it on in Settings → Privacy, "
+            "or pass --force for a one-off.",
+            file=sys.stderr,
+        )
+        return EXIT_ERROR
+
+    provider = BinlistProvider(
+        endpoint=settings.binlist_endpoint,
+        budget=RequestBudget(get_paths().config_dir / "binlist-budget.json"),
+    )
+    try:
+        reading = provider.lookup(args.bin)
+    except RateLimited as exc:
+        print(f"error: {exc.message}", file=sys.stderr)
+        return EXIT_ERROR
+
+    if reading is None:
+        print(f"binlist.net has no record for {args.bin}.")
+        print(provider.status_line())
+        return EXIT_OK
+
+    print(f"{reading.query}  (binlist.net — an external reading, not your data)")
+    _print_table(
+        [
+            ("Scheme", reading.scheme or UNKNOWN_DISPLAY),
+            ("Card type", reading.card_type or UNKNOWN_DISPLAY),
+            ("Brand", reading.brand or UNKNOWN_DISPLAY),
+            ("Bank", reading.bank_name or UNKNOWN_DISPLAY),
+            ("Country", reading.country_alpha2 or UNKNOWN_DISPLAY),
+            ("Currency", reading.country_currency or UNKNOWN_DISPLAY),
+            ("City", reading.bank_city or UNKNOWN_DISPLAY),
+            ("Website", reading.bank_url or UNKNOWN_DISPLAY),
+        ]
+    )
+    print()
+    print(provider.status_line())
+    print()
+    print("To keep it, paste these into data/bin-list.csv and rebuild:")
+    print(reading.as_list_row())
+    return EXIT_OK
+
+
 def cmd_dedupe(args: argparse.Namespace) -> int:
     """Find and, where the evidence supports it, resolve duplicate records."""
     from app.services.dedupe_service import DedupeService
@@ -793,6 +844,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--strict", action="store_true", help="exit non-zero if any row was skipped"
     )
     chk.set_defaults(func=cmd_check_list)
+
+    bl = add("binlist", "ask binlist.net about one BIN (5 per hour, nothing stored)")
+    bl.add_argument("bin", help="the BIN to look up")
+    bl.add_argument(
+        "--force", action="store_true", help="run even though the setting is off"
+    )
+    bl.set_defaults(func=cmd_binlist)
 
     ded = add("dedupe", "detect and resolve duplicate records")
     ded.add_argument("--dry-run", action="store_true")
