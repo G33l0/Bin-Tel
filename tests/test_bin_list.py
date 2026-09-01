@@ -182,15 +182,69 @@ def test_a_row_naming_no_institution_is_skipped(tmp_path):
         read_bin_list(path)
 
 
-def test_a_later_row_supersedes_an_earlier_one_and_the_collision_is_reported(tmp_path):
+def test_restating_the_same_fact_is_a_correction_and_the_later_row_wins(tmp_path):
+    """Same BIN, same bank, same relationship and period — one assertion."""
     path = write_list(
         tmp_path,
-        "410000,First Reading,US,visa,credit\n410000,Second Reading,US,visa,credit\n",
+        "410000,Cascade Bank,US,visa,credit\n410000,Cascade Bank,US,visa,debit\n",
     )
     report = read_bin_list(path)
     assert report.accepted == 1
     assert report.duplicates == 1
-    assert report.records[0].issuer == "Second Reading"
+    assert report.records[0].card_type == "debit"
+
+
+def test_two_banks_on_one_bin_are_both_kept(tmp_path):
+    """Collapsing them would assert something the list does not say."""
+    path = write_list(
+        tmp_path,
+        "520001,Harbor Mutual,US,mastercard,debit\n"
+        "520001,Pacific Savings,US,mastercard,debit\n",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 2
+    assert report.distinct_bins == 1
+    assert report.shared_bins == 1
+    assert report.duplicates == 0
+    assert {record.issuer for record in report.records} == {
+        "Harbor Mutual",
+        "Pacific Savings",
+    }
+
+
+def test_a_predecessor_and_its_successor_are_both_kept(tmp_path):
+    path = write_list(
+        tmp_path,
+        "530001,Cascade Bank,former_issuer,2019-01-01,2024-06-30\n"
+        "530001,Meridian Trust,,2024-07-01,\n",
+        header="bin,bank,relationship,effective_from,effective_to",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 2
+    assert report.distinct_bins == 1
+    assert report.duplicates == 0
+
+
+def test_the_same_bank_over_two_different_periods_is_two_facts(tmp_path):
+    path = write_list(
+        tmp_path,
+        "530001,Cascade Bank,former_issuer,2010-01-01,2015-01-01\n"
+        "530001,Cascade Bank,,2024-07-01,\n",
+        header="bin,bank,relationship,effective_from,effective_to",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 2
+    assert report.duplicates == 0
+
+
+def test_the_same_bank_written_differently_is_still_one_fact(tmp_path):
+    path = write_list(
+        tmp_path,
+        "410000,  cascade   bank ,US,visa,credit\n410000,Cascade Bank,US,visa,debit\n",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 1
+    assert report.duplicates == 1
 
 
 def test_a_range_row_carries_both_ends(tmp_path):

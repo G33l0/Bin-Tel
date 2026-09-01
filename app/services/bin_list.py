@@ -13,7 +13,11 @@ about its contents:
 * an unrecognised column stops the read rather than being guessed at, because
   silently ignoring a column is how a list ends up half-imported;
 * a row that cannot be understood is reported with its line number and skipped,
-  and the rest of the file still loads.
+  and the rest of the file still loads;
+* a BIN may appear on **several** rows. Two banks that both use one BIN, and a
+  predecessor that used it until 2024, are separate facts and all of them are
+  kept. Only a row that repeats the *same* institution, relationship and period
+  is treated as a correction of the earlier one.
 
 Nothing here validates a payment card. The BIN is a prefix, not a number: input
 longer than a BIN is refused rather than truncated, so a full card number
@@ -119,9 +123,13 @@ class BinListReport:
     records: list[RawBinRecord] = field(default_factory=list)
     problems: list[RowProblem] = field(default_factory=list)
     columns: list[str] = field(default_factory=list)
-    #: Rows that named a BIN already seen earlier in the file. The later row
-    #: wins, but the collision is reported rather than hidden.
+    #: Rows that restated a fact already recorded — the same BIN, institution,
+    #: relationship and period. The later row wins as a correction, and the
+    #: collision is reported rather than hidden.
     duplicates: int = 0
+    #: BINs that more than one row describes. Not a problem: a shared BIN and a
+    #: succession are both expressed this way.
+    shared_bins: int = 0
 
     @property
     def accepted(self) -> int:
@@ -132,8 +140,14 @@ class BinListReport:
         return len(self.problems)
 
     @property
+    def distinct_bins(self) -> int:
+        return len({record.bin for record in self.records})
+
+    @property
     def summary(self) -> str:
-        parts = [f"{self.accepted:,} BIN(s)"]
+        parts = [f"{self.accepted:,} row(s)", f"{self.distinct_bins:,} BIN(s)"]
+        if self.shared_bins:
+            parts.append(f"{self.shared_bins:,} with more than one entry")
         if self.duplicates:
             parts.append(f"{self.duplicates:,} duplicate(s) superseded")
         if self.rejected:
@@ -256,6 +270,17 @@ def iter_rows(path: Path, *, encoding: str = "utf-8") -> Iterator[tuple[int, lis
         ) from exc
 
 
+def _fact_key(record: RawBinRecord) -> tuple[str, str, str, str, str]:
+    """What makes two rows the same assertion rather than two assertions."""
+    return (
+        record.bin,
+        " ".join((record.issuer or "").split()).casefold(),
+        (record.relationship or "issuer").strip().casefold(),
+        record.effective_from.isoformat() if record.effective_from else "",
+        record.effective_to.isoformat() if record.effective_to else "",
+    )
+
+
 def read_bin_list(path: Path | None = None, *, encoding: str = "utf-8") -> BinListReport:
     """Read the list into records, reporting what could not be understood.
 
@@ -285,7 +310,10 @@ def read_bin_list(path: Path | None = None, *, encoding: str = "utf-8") -> BinLi
 
     columns = resolve_columns(header)
     report = BinListReport(path=path, columns=sorted(set(columns.values())))
-    seen: dict[str, int] = {}
+    # Keyed on the whole *fact*, not on the BIN. Two banks on one BIN, or an
+    # issuer and the predecessor it replaced, are different facts that must
+    # both survive; only a literal restatement is a duplicate.
+    seen: dict[tuple[str, str, str, str, str], int] = {}
 
     for line, cells in rows:
         values = {
@@ -302,13 +330,19 @@ def read_bin_list(path: Path | None = None, *, encoding: str = "utf-8") -> BinLi
             )
             continue
 
-        previous = seen.get(record.bin)
+        key = _fact_key(record)
+        previous = seen.get(key)
         if previous is not None:
             report.duplicates += 1
             report.records[previous] = record
             continue
-        seen[record.bin] = len(report.records)
+        seen[key] = len(report.records)
         report.records.append(record)
+
+    counts: dict[str, int] = {}
+    for record in report.records:
+        counts[record.bin] = counts.get(record.bin, 0) + 1
+    report.shared_bins = sum(1 for count in counts.values() if count > 1)
 
     if not report.records:
         detail = (

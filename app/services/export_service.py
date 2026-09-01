@@ -81,11 +81,36 @@ class ExportService:
                 "exported_at": datetime.now(UTC).isoformat(),
                 "type": "bin_record",
                 "record": record.to_export_dict(),
+                # Split by tense as well as listed in full: a consumer reading
+                # this file must not have to infer which of these use the BIN
+                # now, and must never read a former issuer as a current one.
+                "current_issuers": [
+                    institution.display_name for institution in record.current_issuers
+                ],
+                "former_issuers": [
+                    {
+                        "name": institution.display_name,
+                        "effective_from": institution.effective_from.isoformat()
+                        if institution.effective_from
+                        else None,
+                        "effective_to": institution.effective_to.isoformat()
+                        if institution.effective_to
+                        else None,
+                    }
+                    for institution in record.former_issuers
+                ],
                 "institutions": [
                     {
                         "name": institution.display_name,
                         "legal_name": institution.legal_name,
                         "relationship": institution.relationship_label,
+                        "is_current_issuer": institution.is_currently_issuing,
+                        "effective_from": institution.effective_from.isoformat()
+                        if institution.effective_from
+                        else None,
+                        "effective_to": institution.effective_to.isoformat()
+                        if institution.effective_to
+                        else None,
                         "country": institution.country.label if institution.country else "Unknown",
                     }
                     for institution in record.institutions
@@ -108,11 +133,12 @@ class ExportService:
             "-" * (width + 32),
         ]
         lines.extend(f"{label + ':':<{width}}{value}" for label, value in pairs)
-        if record.has_multiple_institutions:
+        if record.institutions:
             lines.append("")
             lines.append("Associated institutions")
             lines.extend(
                 f"  • {item.display_name} ({item.relationship_label})"
+                + ("" if item.is_currently_issuing else f" — {item.ended_label}")
                 for item in record.institutions
             )
         return "\n".join(lines) + "\n"

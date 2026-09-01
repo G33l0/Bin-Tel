@@ -74,6 +74,8 @@ class RebuildOutcome:
     version: str
     previous_version: str | None = None
     accepted: int = 0
+    distinct_bins: int = 0
+    shared_bins: int = 0
     rejected: int = 0
     duplicates: int = 0
     institutions: int = 0
@@ -89,7 +91,12 @@ class RebuildOutcome:
 
     @property
     def summary(self) -> str:
-        parts = [f"{self.accepted:,} BIN(s)", f"{self.institutions:,} institution(s)"]
+        parts = [
+            f"{self.distinct_bins or self.accepted:,} BIN(s)",
+            f"{self.institutions:,} institution(s)",
+        ]
+        if self.shared_bins:
+            parts.append(f"{self.shared_bins:,} with more than one institution")
         if self.ranges:
             parts.append(f"{self.ranges:,} range(s)")
         if self.duplicates:
@@ -166,13 +173,13 @@ class RebuildService:
         if (
             not allow_shrink
             and previous_count > 0
-            and report.accepted < previous_count * SHRINK_THRESHOLD
+            and report.distinct_bins < previous_count * SHRINK_THRESHOLD
         ):
             raise ShrinkRefused(
                 "The BIN list has far fewer rows than the database it would replace, "
                 "so nothing was changed.",
                 detail=(
-                    f"The list holds {report.accepted:,} BIN(s); the current database "
+                    f"The list holds {report.distinct_bins:,} BIN(s); the current database "
                     f"holds {previous_count:,}. If that is deliberate, rebuild again "
                     "asking to allow the shrink."
                 ),
@@ -187,6 +194,8 @@ class RebuildService:
             version=version,
             previous_version=self._current_version(),
             accepted=report.accepted,
+            distinct_bins=report.distinct_bins,
+            shared_bins=report.shared_bins,
             rejected=report.rejected,
             duplicates=report.duplicates,
             problems=[str(problem) for problem in report.problems[:50]],
@@ -306,7 +315,7 @@ class RebuildService:
                         DatabaseMetadata.VERSION: version,
                         DatabaseMetadata.SCHEMA_VERSION: SCHEMA_VERSION,
                         DatabaseMetadata.RELEASE_DATE: datetime.now(UTC).isoformat(),
-                        DatabaseMetadata.RECORD_COUNT: report.accepted,
+                        DatabaseMetadata.RECORD_COUNT: report.distinct_bins,
                         DatabaseMetadata.PUBLISHER: "Local BIN list",
                         DatabaseMetadata.NOTES: (
                             f"Built from {report.path.name} by Bin-Tel {APP_VERSION}"

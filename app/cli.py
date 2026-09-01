@@ -277,7 +277,9 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
     print(f"Database {outcome.version} is live.")
     _print_table(
         [
-            ("BINs", f"{outcome.accepted:,}"),
+            ("Rows read", f"{outcome.accepted:,}"),
+            ("BINs", f"{outcome.distinct_bins:,}"),
+            ("BINs with several entries", f"{outcome.shared_bins:,}"),
             ("Institutions", f"{outcome.institutions:,}"),
             ("Ranges", f"{outcome.ranges:,}"),
             ("Duplicates superseded", f"{outcome.duplicates:,}"),
@@ -326,7 +328,9 @@ def cmd_check_list(args: argparse.Namespace) -> int:
     _print_table(
         [
             ("Columns used", ", ".join(report.columns)),
-            ("BINs accepted", f"{report.accepted:,}"),
+            ("Rows accepted", f"{report.accepted:,}"),
+            ("BINs", f"{report.distinct_bins:,}"),
+            ("BINs with several entries", f"{report.shared_bins:,}"),
             ("Duplicates superseded", f"{report.duplicates:,}"),
             ("Rows skipped", f"{report.rejected:,}"),
         ]

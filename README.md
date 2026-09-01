@@ -35,6 +35,7 @@ only. Log output is passed through a redaction filter before it is written.
 | | |
 |---|---|
 | **BIN lookup** | Range-aware and length-aware: an exact 8-digit assignment or an account range always outranks the 6-digit root it sits under. Reports every relationship, its standing and its confidence. |
+| **Who uses it, and who stopped** | Several banks on one BIN are all named, never one chosen over the others. A bank that stopped is reported with the date it stopped — and is never presented as the current issuer. |
 | **Bank lookup** | Search an institution by display name, legal name or alias — exact, prefix, contains or fuzzy — and browse its whole BIN portfolio. |
 | **Advanced search** | Nineteen criteria combined in one query, with saved searches and favourites. |
 | **Command palette** | `Ctrl+K` from anywhere: pages, commands, BINs and institutions in one list. |

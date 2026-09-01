@@ -83,9 +83,64 @@ understood is reported with its line number and skipped; everything else still
 builds. `python -m app.cli check-list` reads the file and reports on it without
 touching the database.
 
-**A repeated BIN is not an error.** The later row wins — so you can append a
-correction to the end of the file rather than hunting for the original — and
-the collision is counted and reported.
+**A BIN may appear on several rows**, and that is how you say the interesting
+things. Two banks that both use one BIN, and a predecessor that used it until
+2024, are separate facts and all of them are kept. Only a row repeating the
+*same* institution, relationship and period counts as a correction — the later
+one wins, so you can append a fix to the end of the file rather than hunting
+for the original.
+
+---
+
+## Several banks, and banks that stopped
+
+The interface never picks a winner the data does not support.
+
+**More than one bank currently using a BIN.** Write a row for each:
+
+```csv
+bin,bank
+520001,Harbor Mutual Savings
+520001,Pacific Coast Savings
+```
+
+Both are named in the result, the result is marked **Conflicted**, and no
+confidence percentage is shown — a figure beside "conflicted" would read as
+"90% sure", which is the opposite of what a conflict means.
+
+**A bank that stopped using a BIN.** Give it `former_issuer` and an end date:
+
+```csv
+bin,bank,relationship,effective_from,effective_to
+530001,Cascade Federal Bank,former_issuer,2019-01-01,2024-06-30
+530001,Meridian Trust Bank,,2024-07-01,
+```
+
+The result names **Meridian Trust Bank** as the current issuer and reports
+Cascade beneath it as *stopped 2024-06-30*. A succession is a timeline, not a
+disagreement, so it is not flagged as a conflict.
+
+**A BIN nobody uses any more.** A former issuer with no successor:
+
+```csv
+bin,bank,relationship,effective_to
+540001,Northshore Credit Union,former_issuer,2022-03-31
+```
+
+The result says **"No current issuer recorded"** and names Northshore as the
+previous one, with the date. It never presents a former issuer as the current
+one — that is the single most misleading thing this application could say. If
+the end date is unknown, leave it blank: the result says "stopped — date not
+recorded" rather than inventing one.
+
+Because standing outranks confidence, a row describing an ended relationship
+also never supplies the record's present-tense attributes. A BIN whose current
+issuer is in the UK is not labelled with the country of the bank that stopped
+using it in 2024, whichever row was read first.
+
+Exports carry the same distinction: `current_issuers` and `former_issuers` are
+separate fields in JSON, and CSV and text exports have a **Former Issuers**
+column beside **Issuer**.
 
 ---
 

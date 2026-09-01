@@ -160,6 +160,29 @@ class InstitutionSummary(_DTO):
             return False
 
     @property
+    def was_issuing(self) -> bool:
+        """Whether this relationship describes issuance at any point in time."""
+        from app.models.entities import RelationshipType
+
+        try:
+            return RelationshipType(self.relationship_type).was_issuing
+        except ValueError:
+            return False
+
+    @property
+    def is_currently_issuing(self) -> bool:
+        return self.is_issuing and self.is_current
+
+    @property
+    def ended_label(self) -> str:
+        """When this relationship stopped applying, as plainly as the data allows."""
+        if self.is_currently_issuing:
+            return ""
+        if self.effective_to:
+            return f"Stopped {self.effective_to.date().isoformat()}"
+        return "Stopped — date not recorded"
+
+    @property
     def effective_period(self) -> str:
         """``2020–2024``, ``Since 2024`` or ``—`` when no dates are recorded."""
         start = self.effective_from.year if self.effective_from else None
@@ -234,29 +257,90 @@ class BinRecord(_DTO):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def issuer_name(self) -> str:
-        primary = self.primary_institution
-        return primary.display_name if primary else UNKNOWN_DISPLAY
+        """Who uses this BIN *now* — every one of them, or ``Unknown``.
+
+        Three rules, and all three exist to stop a false positive:
+
+        * one current issuer names that institution;
+        * several current issuers name **all** of them, because picking one
+          would assert something the data does not say;
+        * none names nobody. A former issuer is never presented as the issuer,
+          and neither is a parent or a processor.
+        """
+        issuers = self.current_issuers
+        if not issuers:
+            return UNKNOWN_DISPLAY
+        return " · ".join(item.display_name for item in issuers)
+
+    @property
+    def current_issuers(self) -> tuple[InstitutionSummary, ...]:
+        """Every institution currently issuing on this allocation.
+
+        More than one is a legitimate state — a shared allocation, or two
+        records that disagree — and the interface shows all of them rather
+        than choosing.
+        """
+        issuers = [item for item in self.institutions if item.is_issuing and item.is_current]
+        return tuple(
+            sorted(issuers, key=lambda item: (not item.is_primary, item.display_name))
+        )
+
+    @property
+    def former_issuers(self) -> tuple[InstitutionSummary, ...]:
+        """Institutions that used to issue here, most recently ended first.
+
+        Covers both spellings the data can take: a relationship explicitly
+        recorded as a former issuer, and an issuer relationship that has been
+        closed off with an end date.
+        """
+        former = [
+            item
+            for item in self.institutions
+            if item.was_issuing and not item.is_currently_issuing
+        ]
+        return tuple(
+            sorted(
+                former,
+                key=lambda item: (
+                    item.effective_to is None,
+                    -(item.effective_to.timestamp() if item.effective_to else 0.0),
+                    item.display_name,
+                ),
+            )
+        )
+
+    @property
+    def former_issuers_label(self) -> str:
+        """``Cascade Bank (stopped 2024-06-30)`` — or ``Unknown`` when none."""
+        if not self.former_issuers:
+            return UNKNOWN_DISPLAY
+        return "; ".join(
+            f"{item.display_name} ({item.ended_label.lower()})"
+            for item in self.former_issuers
+        )
+
+    @property
+    def has_shared_issuance(self) -> bool:
+        """Whether more than one institution currently issues on this BIN."""
+        return len({item.id for item in self.current_issuers}) > 1
+
+    @property
+    def issuer_is_known(self) -> bool:
+        """Whether anyone currently issues here. False is a real answer."""
+        return bool(self.current_issuers)
 
     @property
     def primary_institution(self) -> InstitutionSummary | None:
         """The best-supported *current issuing* relationship, if there is one.
 
-        A former issuer is never promoted over a current one, and an
-        associative relationship (a parent, a processor) is never promoted over
-        an issuing one — naming either as "the issuer" would be wrong.
+        Deliberately returns ``None`` rather than falling back: a former issuer
+        promoted here would be read as the present one, and an associative
+        relationship — a parent, a processor — says something different, not
+        the same thing more weakly. Callers that want those ask for them by
+        name.
         """
-        current_issuers = [
-            item for item in self.institutions if item.is_issuing and item.is_current
-        ]
-        for institution in current_issuers:
-            if institution.is_primary:
-                return institution
-        if current_issuers:
-            return current_issuers[0]
-        issuers = [item for item in self.institutions if item.is_issuing]
-        if issuers:
-            return issuers[0]
-        return self.institutions[0] if self.institutions else None
+        issuers = self.current_issuers
+        return issuers[0] if issuers else None
 
     @property
     def has_multiple_institutions(self) -> bool:
@@ -316,6 +400,7 @@ class BinRecord(_DTO):
             ("Prepaid", display_optional_bool(self.is_prepaid)),
             ("Commercial", display_optional_bool(self.is_commercial)),
             ("Issuer", self.issuer_name),
+            ("Former Issuers", self.former_issuers_label),
             ("Issuer Legal Name", self.issuer_legal_name),
             ("Parent Institution", self.parent_name),
             ("Country", self.country.display_name if self.country else UNKNOWN_DISPLAY),

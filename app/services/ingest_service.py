@@ -637,7 +637,16 @@ class IngestService:
             result.created += 1
         else:
             record = existing
-            changed = self._merge_bin(record, values, raw, result)
+            changed = self._merge_bin(
+                record,
+                values,
+                raw,
+                result,
+                claim_is_current=(
+                    raw.effective_to is None
+                    and _relationship_for(raw) is not RelationshipType.FORMER_ISSUER
+                ),
+            )
             action = "updated" if changed else "unchanged"
             if changed:
                 result.updated += 1
@@ -653,7 +662,12 @@ class IngestService:
                 _relationship_for(raw),
                 raw.confidence,
                 primary=True,
-                is_current=raw.effective_to is None,
+                # A relationship recorded as a *former* issuer is never
+                # current, whether or not an end date came with it.
+                is_current=(
+                    raw.effective_to is None
+                    and _relationship_for(raw) is not RelationshipType.FORMER_ISSUER
+                ),
                 effective_from=raw.effective_from,
                 effective_to=raw.effective_to,
             )
@@ -673,9 +687,24 @@ class IngestService:
         return action
 
     def _merge_bin(
-        self, record: Bin, values: dict[str, Any], raw: RawBinRecord, result: IngestResult
+        self,
+        record: Bin,
+        values: dict[str, Any],
+        raw: RawBinRecord,
+        result: IngestResult,
+        *,
+        claim_is_current: bool = True,
     ) -> bool:
-        """Fill blanks; record disagreements instead of overwriting."""
+        """Fill blanks; record disagreements instead of overwriting.
+
+        Standing is weighed before confidence. A row describing a relationship
+        that has *ended* may fill a gap, but it never displaces a value a
+        present-tense row supplied — a BIN labelled with the country of the
+        bank that stopped using it in 2024 is a false positive, however well
+        that row was evidenced. Conversely a current claim takes a tie against
+        a historical one, rather than the tie going to whichever row happened
+        to be read first.
+        """
         changed = False
         for key, incoming in values.items():
             if incoming in (None, "", CardType.UNKNOWN.value, FundingType.UNKNOWN.value):
@@ -692,7 +721,15 @@ class IngestService:
             if field_name in CONFLICT_FIELDS or key in CONFLICT_FIELDS:
                 self._record_conflict(record.bin, field_name, current, incoming, raw.confidence)
                 result.conflicts += 1
-                if raw.confidence > record.confidence:
+                if not claim_is_current:
+                    # Recorded as a conflict, never promoted: the past does not
+                    # get to overrule the present.
+                    continue
+                supersedes = (
+                    raw.confidence > record.confidence
+                    or (raw.confidence == record.confidence and not record.has_current_issuer)
+                )
+                if supersedes:
                     setattr(record, key, incoming)
                     record.confidence = raw.confidence
                     changed = True

@@ -164,11 +164,21 @@ class RelationshipType(StrEnum):
 
     @property
     def is_issuing(self) -> bool:
-        """Whether this relationship asserts the institution issues the card."""
+        """Whether this relationship asserts the institution issues the card.
+
+        Present tense, deliberately. A former issuer issued once and does not
+        now, so it is excluded here and reported separately — presenting it as
+        an issuer is the single most misleading thing a BIN result can do.
+        """
         return self in (
             RelationshipType.ISSUER,
             RelationshipType.PROGRAM_ISSUER,
         )
+
+    @property
+    def was_issuing(self) -> bool:
+        """Whether this relationship describes issuance at any point in time."""
+        return self.is_issuing or self is RelationshipType.FORMER_ISSUER
 
 
 class InstitutionLinkType(StrEnum):
@@ -525,6 +535,19 @@ class Bin(Base):
         CheckConstraint("length(bin) >= 4", name="ck_bins_min_length"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="ck_bins_confidence"),
     )
+
+    @property
+    def has_current_issuer(self) -> bool:
+        """Whether any institution is recorded as issuing here *now*.
+
+        Read while merging: a present-tense claim outranks an equally
+        confident historical one, and this is how that is decided.
+        """
+        issuing = {item.value for item in RelationshipType if item.is_issuing}
+        return any(
+            link.is_current and link.relationship_type in issuing
+            for link in self.institution_links
+        )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Bin {self.bin}>"
