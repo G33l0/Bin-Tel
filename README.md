@@ -45,6 +45,7 @@ only. Log output is passed through a redaction filter before it is written.
 | **Report Centre** | CSV, JSON, TXT, PDF and XLSX, with reusable templates. |
 | **Database Administration** | A measured health score, integrity checks, reindex, vacuum, orphan removal, backup and restore. |
 | **Your own BIN list** | The database is built from one file you maintain, [`data/bin-list.csv`](docs/BIN_LIST.md). Add rows, rebuild, done. |
+| **Optional second opinion** | Check one BIN against binlist.net and see exactly where it disagrees with you. Off by default, five an hour, and never written to your database. |
 | **Gaps filled from evidence** | A blank network comes from the BIN's published range; a bank's country and website reach all of its BINs. Never a guessed website, card type or issuer — those stay Unknown. |
 | **Reversible rebuilds** | The database a rebuild replaces is kept, so a bad list is one command away from undone. |
 | **Updates** | Verified, atomic database installs with automatic rollback. |
@@ -54,7 +55,8 @@ only. Log output is passed through a redaction filter before it is written.
 
 ## Installing
 
-Bin-Tel needs Python 3.12 or newer.
+Bin-Tel needs Python 3.12 or newer. If you would rather be walked through it
+one step at a time, read [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
 
 ```bash
 git clone https://github.com/G33l0/Bin-Tel.git
@@ -196,6 +198,8 @@ repositories, repositories own the SQL.** No page imports the ORM.
 
 | | |
 |---|---|
+| [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Nothing to a working app, one step at a time |
+| [SECOND_OPINION.md](docs/SECOND_OPINION.md) | The optional binlist.net check: what it is for, and what it is not |
 | [BIN_LIST.md](docs/BIN_LIST.md) | The list your database is built from, and the rebuild loop |
 | [LOOKUP.md](docs/LOOKUP.md) | The lookup engine: allocations, specificity, confidence, conflicts |
 | [DATABASE.md](docs/DATABASE.md) | Schema, the two-database split, indexes, integrity, health |

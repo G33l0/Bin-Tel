@@ -7,8 +7,15 @@
 #
 # or, in the app: Database → Rebuild from BIN list.
 #
-# Only `bin` and `bank` are required. Leave anything else blank.
+# Only `bin` and `bank` are required — the two columns below are a complete,
+# working file on their own. Just add a line per BIN:
+#
+#     414720,Chase Bank
+#
 # Lines starting with # are ignored, so you can keep notes in here.
+#
+# To record more, add the columns you want to the header line, in any order.
+# Every one of these is optional:
 #
 #   bin            6 to 8 digits. 8-digit BINs are stored as 8-digit BINs —
 #                  they are never shortened to 6 and never invented from a 6.
@@ -47,4 +54,4 @@
 # Never put a full card number, CVV, PIN or cardholder name in this file.
 # The reader refuses anything longer than 8 digits for exactly that reason.
 #
-bin,bank,bin_high,range_type,network,brand,card_type,funding_type,prepaid,commercial,country,currency,city,state,website,phone,legal_name,parent,relationship,effective_from,effective_to,notes
+bin,bank

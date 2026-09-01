@@ -25,12 +25,17 @@ a BIN-length prefix before it is used, and exports contain BIN metadata only.
 
 ## What leaves this machine
 
-Two things, and only when you ask for them:
+Three things, and only when you ask for them:
 
 1. **A database update**, from the manifest URL configured in Settings →
    Updates. The request carries nothing but the manifest and package paths.
 2. **An import from a remote data source you configured yourself**, when you
    run that import.
+3. **A binlist.net lookup**, if you switch it on in Settings → Privacy and
+   press the button. It sends one BIN — truncated to at most 8 digits, so a
+   full card number cannot leave the machine — and nothing else. Off by
+   default, never automatic, never in the background. See
+   [SECOND_OPINION.md](SECOND_OPINION.md).
 
 That is the whole list. There is no telemetry, no usage reporting, no crash
 reporting, no account, no licence check and no analytics endpoint. Bin-Tel

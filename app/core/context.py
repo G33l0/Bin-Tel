@@ -23,6 +23,7 @@ from app.core.logging_config import get_logger, log_event
 from app.core.paths import AppPaths, get_paths
 from app.database.engine import DatabaseManager
 from app.database.user_store import USER_DATABASE_FILENAME, UserDataStore
+from app.providers.binlist import BinlistProvider, RequestBudget
 from app.providers.http_provider import HttpProvider
 from app.providers.local_provider import LocalPackageProvider
 from app.providers.manager import ProviderManager
@@ -110,6 +111,14 @@ class AppContext:
         )
 
         # -- distribution ----------------------------------------------------
+        # An optional second opinion, off unless the user turns it on. The
+        # request budget lives on disk so closing the application does not
+        # hand back a fresh allowance.
+        self.binlist = BinlistProvider(
+            endpoint=self.config.settings.external.binlist_endpoint,
+            budget=RequestBudget(self.paths.config_dir / "binlist-budget.json"),
+        )
+
         self.providers = ProviderManager()
         self.journal = UpdateJournal(self.paths.config_dir / "update-history.json")
         self.updates = DatabaseUpdateService(
@@ -205,6 +214,10 @@ class AppContext:
         self.backups.set_paths(self.database_path, self.config.backups_path())
         self.updates.set_backup_before_update(settings.database.backup_before_update)
         self.reports.set_exports_dir(self.config.reports_path())
+        self.binlist = BinlistProvider(
+            endpoint=settings.external.binlist_endpoint,
+            budget=self.binlist.budget,
+        )
         self.configure_providers()
         new_path = self.config.database_path()
         if new_path != self.database_path:

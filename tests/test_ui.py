@@ -203,3 +203,99 @@ def test_the_result_card_states_how_a_match_was_reached(window, context, qapp):
     assert not card.match_label.isHidden()
     assert "Match:" in card.match_label.text()
     assert "Confidence:" in card.match_label.text()
+
+
+# ---------------------------------------------------------------------------
+# The binlist.net second opinion, wired into the page
+# ---------------------------------------------------------------------------
+
+BINLIST_RESPONSE = {
+    "scheme": "visa",
+    "type": "debit",
+    "brand": "Visa/Dankort",
+    "country": {"alpha2": "DK", "name": "Denmark", "currency": "DKK"},
+    "bank": {"name": "Jyske Bank", "url": "www.jyskebank.dk", "city": "Hjorring"},
+}
+
+
+def _scripted_binlist(status=200, payload=None):
+    """A client that answers from a script. The suite never hits the network."""
+    import httpx
+
+    def handler(request):
+        return httpx.Response(status, json=payload if payload is not None else {})
+
+    return lambda: httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _fake_provider(status=200, payload=None):
+    from app.providers.binlist import BinlistProvider, RequestBudget
+
+    return BinlistProvider(
+        budget=RequestBudget(None), client_factory=_scripted_binlist(status, payload)
+    )
+
+
+def test_the_binlist_button_is_hidden_until_the_setting_is_on(window):
+    window.navigate("bin_lookup")
+    page = window.bin_page
+    page.perform_search("410000")
+    pump(20)
+    page._refresh_second_opinion()
+    assert page.second_opinion_row.isHidden(), "off by default means no button"
+
+
+def test_a_binlist_reading_never_enters_the_database(window, qapp):
+    context = window.context
+    context.config.settings.external.binlist_enabled = True
+    window.navigate("bin_lookup")
+    page = window.bin_page
+    page.perform_search("410000")
+    pump(40)
+
+    before = context.stats.info().stats.bins if context.database.is_open else 0
+    context.binlist = _fake_provider(200, BINLIST_RESPONSE)
+    page._check_binlist()
+    pump(60)
+
+    assert not page.external_panel.isHidden()
+    assert "Jyske Bank" in page.external_panel.fields_label.text()
+    after = context.stats.info().stats.bins if context.database.is_open else 0
+    assert after == before, "an external reading must never enter the database"
+
+
+def test_a_new_search_drops_the_previous_binlist_reading(window, qapp):
+    context = window.context
+    context.config.settings.external.binlist_enabled = True
+    context.binlist = _fake_provider(200, BINLIST_RESPONSE)
+    window.navigate("bin_lookup")
+    page = window.bin_page
+    page.perform_search("410000")
+    pump(40)
+    page._check_binlist()
+    pump(60)
+    assert not page.external_panel.isHidden()
+
+    page.perform_search("520001")
+    pump(40)
+    assert page.external_panel.isHidden(), (
+        "a reading belongs to the BIN it was fetched for"
+    )
+
+
+def test_binlist_being_unavailable_never_breaks_the_page(window, qapp):
+    """Bin-Tel's own answer must not depend on somebody else's service."""
+    context = window.context
+    context.config.settings.external.binlist_enabled = True
+    context.binlist = _fake_provider(503, {})
+    window.navigate("bin_lookup")
+    page = window.bin_page
+    page.perform_search("410000")
+    pump(40)
+    local_answer = page.result_card.issuer_label.text()
+
+    page._check_binlist()
+    pump(60)
+
+    assert page.result_card.issuer_label.text() == local_answer
+    assert not page.external_panel.banner.isHidden()

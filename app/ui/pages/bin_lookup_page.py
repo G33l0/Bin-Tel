@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QLabel, QTabWidget, QWidget
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QLabel, QPushButton, QTabWidget, QWidget
 
 from app.core.config import SearchBehavior
 from app.core.errors import ValidationError
@@ -23,9 +24,10 @@ from app.ui.widgets.adaptive_stack import AdaptiveStack
 from app.ui.widgets.advanced_search import AdvancedSearchPanel
 from app.ui.widgets.bin_result_card import BinResultCard
 from app.ui.widgets.cards import Card
+from app.ui.widgets.external_reading_panel import ExternalReadingPanel
 from app.ui.widgets.search_box import SearchBox
-from app.ui.widgets.states import EmptyState, ErrorState, LoadingState
-from app.utils.qt_helpers import shortcut, vbox
+from app.ui.widgets.states import EmptyState, ErrorState, LoadingState, StateKind
+from app.utils.qt_helpers import expanding_spacer, hbox, shortcut, vbox
 from app.workers.base import Worker, run_in_background
 from app.workers.search_worker import BinSearchWorker
 
@@ -69,6 +71,28 @@ class BinLookupPage(BasePage):
         # -- result surfaces ------------------------------------------------
         self.stack = AdaptiveStack(quick)
         quick_layout.addWidget(self.stack, 1)
+
+        # -- second opinion --------------------------------------------------
+        # Outside the stack deliberately: the most useful moment to ask an
+        # external service is when *your* list has no record, and that is a
+        # different stack page from a result.
+        self.second_opinion_row = QWidget(quick)
+        second_opinion_layout = hbox(self.second_opinion_row, spacing=10)
+        self.binlist_button = QPushButton("Check binlist.net", self.second_opinion_row)
+        self.binlist_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.binlist_button.setAccessibleName("Check this BIN against binlist.net")
+        self.binlist_button.clicked.connect(self._check_binlist)
+        second_opinion_layout.addWidget(self.binlist_button)
+        self.binlist_status = QLabel("", self.second_opinion_row)
+        self.binlist_status.setProperty("role", "muted")
+        second_opinion_layout.addWidget(self.binlist_status)
+        second_opinion_layout.addItem(expanding_spacer())
+        self.second_opinion_row.hide()
+        quick_layout.addWidget(self.second_opinion_row)
+
+        self.external_panel = ExternalReadingPanel(quick)
+        self.external_panel.copy_requested.connect(self._copy_external_row)
+        quick_layout.addWidget(self.external_panel)
 
         self.idle_state = EmptyState(
             "Search for a BIN",
@@ -170,6 +194,68 @@ class BinLookupPage(BasePage):
         self.advanced_panel.set_page_size(
             self.context.config.settings.search.results_per_page
         )
+        self._refresh_second_opinion()
+
+    # -- second opinion ----------------------------------------------------
+    @property
+    def _binlist_enabled(self) -> bool:
+        return self.context.config.settings.external.binlist_enabled
+
+    def _refresh_second_opinion(self) -> None:
+        """Show the button only when it is switched on and there is a query."""
+        available = self._binlist_enabled and bool(self._last_query)
+        self.second_opinion_row.setVisible(available)
+        if not self._binlist_enabled:
+            self.external_panel.clear()
+            return
+        remaining = self.context.binlist.remaining()
+        self.binlist_button.setEnabled(remaining > 0 and bool(self._last_query))
+        self.binlist_status.setText(self.context.binlist.status_line())
+
+    def _check_binlist(self) -> None:
+        """Ask binlist.net about the current query, on the worker thread."""
+        query = self._last_query
+        if not query:
+            return
+        self.binlist_button.setEnabled(False)
+        self.binlist_status.setText("Asking binlist.net…")
+        worker: Worker = Worker(self.context.binlist.lookup, query)
+        worker.signals.result.connect(self._on_external_reading)
+        worker.signals.failed.connect(self._on_external_failed)
+        run_in_background(worker)
+
+    def _on_external_reading(self, reading) -> None:
+        self._refresh_second_opinion()
+        if reading is None:
+            self.external_panel.show_message(
+                f"binlist.net has no record for {self._last_query} either.",
+                StateKind.INFO,
+            )
+            return
+        # Disagreements are listed, never resolved: the local list stays the
+        # authority and this is somebody else's reading of the same BIN.
+        record = self.result_card.record
+        self.external_panel.show_reading(
+            reading,
+            differences=reading.differences_from(record),
+            allowance=self.context.binlist.status_line(),
+        )
+
+    def _on_external_failed(self, exc: BaseException) -> None:
+        from app.providers.binlist import RateLimited
+
+        self._refresh_second_opinion()
+        message = getattr(exc, "message", None) or str(exc)
+        self.external_panel.show_message(
+            message,
+            StateKind.WARNING if isinstance(exc, RateLimited) else StateKind.DANGER,
+        )
+
+    def _copy_external_row(self, text: str) -> None:
+        from PyQt6.QtWidgets import QApplication
+
+        QApplication.clipboard().setText(text)
+        self.toast("Copied — paste it into data/bin-list.csv, then rebuild")
 
     def focus_search(self) -> None:
         self.search.focus()
@@ -178,6 +264,8 @@ class BinLookupPage(BasePage):
         self._last_query = ""
         self.search.set_error(False)
         self.result_card.clear()
+        self.external_panel.clear()
+        self._refresh_second_opinion()
         self.stack.setCurrentWidget(self.idle_state)
 
     # -- search -----------------------------------------------------------
@@ -188,6 +276,10 @@ class BinLookupPage(BasePage):
             return
         self._last_query = query
         self.search.set_text(query)
+        # A reading belongs to the BIN it was fetched for, so a new search
+        # drops it rather than leaving it beside a different answer.
+        self.external_panel.clear()
+        self._refresh_second_opinion()
 
         if self._worker is not None:
             self._worker.cancel()
