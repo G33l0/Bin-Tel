@@ -19,7 +19,6 @@ from PyQt6.QtWidgets import (
 )
 
 from app.core.errors import ValidationError
-from app.licensing.plans import Feature, Limit
 from app.models.schemas import AdvancedQuery
 from app.services.report_service import (
     ReportContent,
@@ -208,22 +207,11 @@ class ReportsPage(BasePage):
         return combo
 
     def _populate_formats(self) -> None:
-        entitled_pdf = self.context.entitlements.has_feature(Feature.PDF_REPORTS)
-        entitled_xlsx = self.context.entitlements.has_feature(Feature.XLSX_REPORTS)
         self.format_combo.blockSignals(True)
         current = self.format_combo.currentData()
         self.format_combo.clear()
         for fmt in available_formats():
-            locked = (fmt is ReportFormat.PDF and not entitled_pdf) or (
-                fmt is ReportFormat.XLSX and not entitled_xlsx
-            )
-            label = f"{fmt.display} — Pro" if locked else fmt.display
-            self.format_combo.addItem(label, fmt.value)
-            if locked:
-                index = self.format_combo.count() - 1
-                self.format_combo.setItemData(
-                    index, "Included with Pro", Qt.ItemDataRole.ToolTipRole
-                )
+            self.format_combo.addItem(fmt.display, fmt.value)
         index = self.format_combo.findData(current or ReportFormat.CSV.value)
         self.format_combo.setCurrentIndex(max(0, index))
         self.format_combo.blockSignals(False)
@@ -236,11 +224,6 @@ class ReportsPage(BasePage):
         self._populate_formats()
         self._reload_templates()
         self._reload_history()
-        entitled = self.context.entitlements.has_feature(Feature.REPORT_TEMPLATES)
-        self.save_template_button.setEnabled(entitled)
-        self.save_template_button.setToolTip(
-            "" if entitled else "Saved report templates are included with Pro."
-        )
 
     def _populate_filters(self) -> None:
         if not self.context.database.is_open:
@@ -291,36 +274,6 @@ class ReportsPage(BasePage):
 
     def _selected_format(self) -> ReportFormat:
         return ReportFormat(self.format_combo.currentData() or ReportFormat.CSV.value)
-
-    def _check_format_entitlement(self) -> bool:
-        fmt = self._selected_format()
-        feature = (
-            Feature.PDF_REPORTS
-            if fmt is ReportFormat.PDF
-            else Feature.XLSX_REPORTS
-            if fmt is ReportFormat.XLSX
-            else None
-        )
-        if feature is None:
-            return True
-        entitlement = self.context.entitlements.entitlement(feature)
-        if entitlement.granted:
-            return True
-        self.banner.show_message(
-            f"{fmt.display} reports are included with "
-            f"{(entitlement.required_plan or 'Pro')}. CSV, JSON and text are available "
-            "on your plan.",
-            StateKind.INFO,
-            action_text="See plans",
-        )
-        try:
-            self.banner.action_triggered.disconnect()
-        except TypeError:
-            pass
-        self.banner.action_triggered.connect(
-            lambda: self.navigate(f"license:{feature.value}")
-        )
-        return False
 
     def _build(self, on_ready) -> None:
         if self._building or not self.context.database.is_open:
@@ -413,9 +366,6 @@ class ReportsPage(BasePage):
         self._build(show)
 
     def _generate(self) -> None:
-        if not self._check_format_entitlement():
-            return
-
         def write(content: ReportContent) -> None:
             self._content = content
             fmt = self._selected_format()
@@ -444,17 +394,6 @@ class ReportsPage(BasePage):
                 size_bytes=result.size_bytes,
                 database_version=content.database_version,
             )
-            from app.telemetry.events import Counter, Event, bucket
-
-            self.context.telemetry.increment(Counter.REPORT_COUNT)
-            self.context.telemetry.record(
-                Event.REPORT_GENERATED,
-                {
-                    "report_type": content.report_type.value,
-                    "format": fmt.value,
-                    "row_bucket": bucket(result.row_count),
-                },
-            )
             self.preview_view.setPlainText(self.context.reports.preview(content, limit=40))
             self._reload_history()
             self.banner.show_message(
@@ -475,10 +414,6 @@ class ReportsPage(BasePage):
 
     # -- templates ---------------------------------------------------------
     def _save_template(self) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.REPORT_TEMPLATES)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
-            return
         from app.ui.dialogs.watchlist_dialog import CreateWatchlistDialog
 
         dialog = CreateWatchlistDialog(self)
@@ -495,7 +430,6 @@ class ReportsPage(BasePage):
                 str(self.format_combo.currentData()),
                 self._query().model_dump_json(),
                 dialog.description,
-                limit=self.context.entitlements.limit(Limit.REPORT_TEMPLATES, 0),
             )
         except ValidationError as exc:
             self.banner.show_message(exc.message, StateKind.WARNING)

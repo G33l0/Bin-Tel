@@ -99,7 +99,7 @@ folder — useful on a USB stick.
 
 **Two databases, deliberately.** The intelligence database is replaceable: an
 update swaps the whole file. Your own data — saved searches, favourites,
-watchlists, licence, history, templates — lives in a separate
+watchlists, history, templates — lives in a separate
 `bintel-user.sqlite` that updates never touch, and cross-references the
 intelligence database by value (BIN digits, institution UID) rather than by row
 id. See [docs/DATABASE.md](docs/DATABASE.md).
@@ -134,7 +134,7 @@ python -m app.cli restore ./backups/bintel-2026.01.1.sqlite
 |---|---|
 | `Ctrl+K` / `Ctrl+P` | Command palette |
 | `Ctrl+1` … `Ctrl+7` | Jump to a page |
-| `Ctrl+D` | Database · `Ctrl+U` Updates · `Ctrl+L` Plan & Licence |
+| `Ctrl+D` | Database · `Ctrl+U` Updates |
 | `Ctrl+B` | Collapse the sidebar · `Ctrl+T` cycle theme |
 | `Ctrl+,` | Settings · `F5` refresh the current page |
 | `Esc` | Clear a search, or close the palette |
@@ -164,15 +164,12 @@ app/
   normalizers/   names, networks, card attributes, geography, confidence scoring
   services/      lookup, search, analytics, reports, watchlists, updates, health…
   providers/     manifests, downloads, compression, delta planning
-  licensing/     plans, entitlements, signing, activation, devices
-  telemetry/     the opt-in event vocabulary and its sanitiser
   workers/       QRunnable wrappers, so nothing blocking runs on the GUI thread
   ui/            themes, widgets, pages, dialogs, windows
 ```
 
 The rule that shapes all of it: **widgets ask services, services ask
-repositories, repositories own the SQL.** No page imports the ORM, and no page
-compares a plan name — it asks the entitlement service about a named feature.
+repositories, repositories own the SQL.** No page imports the ORM.
 
 ---
 
@@ -183,8 +180,6 @@ compares a plan name — it asks the entitlement service about a named feature.
 | [LOOKUP.md](docs/LOOKUP.md) | The lookup engine: allocations, specificity, confidence, conflicts |
 | [DATABASE.md](docs/DATABASE.md) | Schema, the two-database split, indexes, integrity, health |
 | [UPDATES.md](docs/UPDATES.md) | Manifests, the install pipeline, rollback, deltas |
-| [LICENSING.md](docs/LICENSING.md) | Signed licences, activation, devices, offline grace |
-| [MONETIZATION.md](docs/MONETIZATION.md) | Plans, entitlements, and how a paid surface is built |
 | [WATCHLISTS.md](docs/WATCHLISTS.md) | Change detection and alerts |
 | [REPORTING.md](docs/REPORTING.md) | Report types, formats and templates |
 | [ANALYTICS.md](docs/ANALYTICS.md) | What each figure measures |

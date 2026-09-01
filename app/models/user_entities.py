@@ -1,10 +1,9 @@
-"""User-owned data: watchlists, saved searches, favorites, templates, telemetry.
+"""User-owned data: watchlists, saved searches, favorites and templates.
 
 This schema deliberately lives in a **separate SQLite file** from the
 intelligence database. The intelligence database is replaced wholesale every
 time a new package is installed, so anything the user created — a watchlist, a
-saved search, a report template, a queued telemetry event — would be destroyed
-by the next update if it were stored there.
+saved search, a report template — would be destroyed by the next update if it were stored there.
 
 References into the intelligence database are therefore stored by *value*
 (the BIN digits, the institution's stable ``uid``) rather than by foreign key,
@@ -300,48 +299,8 @@ class GeneratedReport(UserBase):
 
 
 # ---------------------------------------------------------------------------
-# Telemetry and notifications
+# Notifications
 # ---------------------------------------------------------------------------
-
-
-class TelemetryEvent(UserBase):
-    """A queued, aggregated product event awaiting upload.
-
-    Nothing here identifies a person or reveals what was searched for: the
-    payload is validated against an allow-list before it is ever queued.
-    """
-
-    __tablename__ = "telemetry_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
-    payload: Mapped[str | None] = mapped_column(Text)
-    app_version: Mapped[str | None] = mapped_column(String(32))
-    database_version: Mapped[str | None] = mapped_column(String(32))
-    plan: Mapped[str | None] = mapped_column(String(24))
-    platform: Mapped[str | None] = mapped_column(String(32))
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    attempts: Mapped[int] = mapped_column(Integer, default=0)
-    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
-
-    __table_args__ = (Index("ix_telemetry_events_created", "created_at"),)
-
-
-class TelemetryCounter(UserBase):
-    """Aggregated counters — how often a feature was used, never with what."""
-
-    __tablename__ = "telemetry_counters"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
-    period: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
-    value: Mapped[int] = mapped_column(Integer, default=0)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
-
-    __table_args__ = (
-        UniqueConstraint("name", "period", name="uq_counter_period"),
-        Index("ix_telemetry_counters_name", "name", "period"),
-    )
 
 
 class Notification(UserBase):
@@ -359,36 +318,6 @@ class Notification(UserBase):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     __table_args__ = (Index("ix_notifications_unread", "read", "created_at"),)
-
-
-# ---------------------------------------------------------------------------
-# Licensing (local cache of a server-signed state)
-# ---------------------------------------------------------------------------
-
-
-class LicenseRecord(UserBase):
-    """The last server-signed license state, cached for offline use.
-
-    The signed token is the authority; these columns exist so the application
-    can display and query the state without re-parsing the token every time.
-    """
-
-    __tablename__ = "license_state"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    license_key: Mapped[str | None] = mapped_column(String(128))
-    license_id: Mapped[str | None] = mapped_column(String(64))
-    plan: Mapped[str] = mapped_column(String(24), default="free")
-    status: Mapped[str] = mapped_column(String(24), default="free")
-    #: The server-signed token; verified against the embedded public key.
-    token: Mapped[str | None] = mapped_column(Text)
-    device_id: Mapped[str | None] = mapped_column(String(64))
-    device_limit: Mapped[int] = mapped_column(Integer, default=1)
-    issued_at: Mapped[datetime | None] = mapped_column(DateTime)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
-    last_validated_at: Mapped[datetime | None] = mapped_column(DateTime)
-    grace_until: Mapped[datetime | None] = mapped_column(DateTime)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class UserMetadata(UserBase):

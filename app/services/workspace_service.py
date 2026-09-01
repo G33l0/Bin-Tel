@@ -1,8 +1,6 @@
 """The user's own workspace: saved searches, history, favourites, notifications.
 
 All of it lives in the user-data store, so a database update leaves it intact.
-Quotas come from the entitlement service rather than being hard-coded, which
-is what lets the free tier keep a useful amount of it.
 """
 
 from __future__ import annotations
@@ -117,16 +115,10 @@ class WorkspaceService:
         query: str = "",
         criteria: AdvancedQuery | None = None,
         pinned: bool = False,
-        limit: int | None = None,
     ) -> SavedSearchInfo:
         cleaned = " ".join((name or "").split())[:128]
         if not cleaned:
             raise ValidationError("Give the saved search a name.")
-        if limit is not None and limit >= 0 and self.saved_search_count() >= limit:
-            raise ValidationError(
-                f"Your plan includes {limit} saved search(es). Remove one, or upgrade "
-                "for more."
-            )
         with self._store.transaction() as session:
             existing = session.execute(
                 select(SavedSearch).where(func.lower(SavedSearch.name) == cleaned.lower())
@@ -336,17 +328,10 @@ class WorkspaceService:
         output_format: str,
         criteria: str,
         description: str = "",
-        *,
-        limit: int | None = None,
     ) -> TemplateInfo:
         cleaned = " ".join((name or "").split())[:128]
         if not cleaned:
             raise ValidationError("Give the template a name.")
-        if limit is not None and limit >= 0 and self.template_count() >= limit:
-            raise ValidationError(
-                f"Your plan includes {limit} report template(s). Remove one, or "
-                "upgrade for more."
-            )
         with self._store.transaction() as session:
             existing = session.execute(
                 select(ReportTemplate).where(

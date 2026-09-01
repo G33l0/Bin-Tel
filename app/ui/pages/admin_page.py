@@ -463,16 +463,6 @@ class DatabaseAdminPage(BasePage):
         self.banner.show_message(
             report.summary, StateKind.SUCCESS if report.ok else StateKind.DANGER
         )
-        from app.telemetry.events import Event
-
-        self.context.telemetry.record(
-            Event.DATABASE_VERIFIED,
-            {
-                "ok": report.ok,
-                "quick": False,
-                "health_score": self._health.percent if self._health else 0,
-            },
-        )
         self._assess_health()
         self.toast("Verification complete" if report.ok else "Verification found problems")
 
@@ -581,12 +571,6 @@ class DatabaseAdminPage(BasePage):
 
     def _on_backup_created(self, path: Path) -> None:
         self._end()
-        from app.telemetry.events import Event, size_bucket
-
-        self.context.telemetry.record(
-            Event.DATABASE_BACKUP_CREATED,
-            {"size_bucket": size_bucket(path.stat().st_size)},
-        )
         self.banner.show_message(f"Backup created: {path.name}", StateKind.SUCCESS)
         self.toast("Backup created")
 
@@ -622,9 +606,6 @@ class DatabaseAdminPage(BasePage):
             self._on_failed(exc)
             return
         self._end()
-        from app.telemetry.events import Event
-
-        self.context.telemetry.record(Event.DATABASE_RESTORED, {"ok": True})
         self.banner.show_message("The backup was restored successfully.", StateKind.SUCCESS)
         self.navigation_requested.emit("__database_reloaded__")
 
@@ -634,9 +615,6 @@ class DatabaseAdminPage(BasePage):
                 self.context.database.open()
         except Exception:  # noqa: BLE001 - the original error matters more
             pass
-        from app.telemetry.events import Event
-
-        self.context.telemetry.record(Event.DATABASE_RESTORED, {"ok": False})
         self._on_failed(exc)
 
     def _delete_backup(self) -> None:

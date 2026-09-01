@@ -5,7 +5,6 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QComboBox, QLabel, QPushButton, QStackedWidget, QWidget
 
-from app.licensing.plans import Feature
 from app.models.schemas import AdvancedQuery
 from app.services.analytics_service import AnalyticsSnapshot
 from app.services.report_service import ReportFormat
@@ -14,7 +13,6 @@ from app.ui.pages.base_page import BasePage
 from app.ui.widgets.cards import Card, CardGrid, MetricCard, SectionHeader
 from app.ui.widgets.charts import BarChart, DonutChart, SparkArea
 from app.ui.widgets.states import LoadingState, StateBanner, StateKind
-from app.ui.widgets.upgrade_prompt import FeatureGate
 from app.utils.formatting import format_number
 from app.utils.qt_helpers import expanding_spacer, hbox, vbox
 from app.workers.base import Worker, run_in_background
@@ -164,10 +162,7 @@ class AnalyticsPage(BasePage):
         lower_layout.addWidget(institutions_card, 1)
         body_layout.addWidget(lower)
 
-        # -- gating -------------------------------------------------------
-        self.gate = FeatureGate(body, Feature.ADVANCED_ANALYTICS, self.surface)
-        self.gate.upgrade_requested.connect(lambda feature: self.navigate(f"license:{feature}"))
-        self.content.addWidget(self.gate, 1)
+        self.content.addWidget(body, 1)
 
         self.loading = LoadingState("Computing analytics…", self.surface)
         self.loading.hide()
@@ -180,10 +175,6 @@ class AnalyticsPage(BasePage):
         self._populate_filters()
 
     def refresh(self) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.ADVANCED_ANALYTICS)
-        if not self.gate.apply(entitlement):
-            self.loading.hide()
-            return
         if not self.context.database.is_open:
             self.banner.show_message(
                 "The database is not open, so there is nothing to analyse yet.",
@@ -358,7 +349,6 @@ class AnalyticsPage(BasePage):
     def on_theme_changed(self) -> None:
         for card in self.cards.values():
             card.refresh_icon()
-        self.gate.refresh_theme()
         for chart in self.charts.values():
             chart.update()  # type: ignore[attr-defined]
         self.growth_chart.update()

@@ -47,26 +47,8 @@ DOWNLOAD_CHUNK_SIZE: Final[int] = 1 << 18  # 256 KiB
 
 USER_AGENT: Final[str] = f"{APP_NAME}/{APP_VERSION} (+{WEBSITE_URL})"
 
-#: Database editions a plan may be entitled to. The application never branches
-#: on these in SQL; the edition is metadata the distribution service uses to
-#: decide which package to serve.
-DATABASE_EDITIONS: Final[tuple[str, ...]] = (
-    "community",
-    "professional",
-    "business",
-    "enterprise",
-)
-
-#: Default licensing endpoint. Overridable through settings, an environment
-#: variable, or the bundled development adapter.
-DEFAULT_LICENSE_API_URL: Final[str] = "https://api.bintel.org/license"
-#: Default telemetry endpoint. Only ever contacted when the user opts in.
-DEFAULT_TELEMETRY_URL: Final[str] = "https://telemetry.bintel.org/v1/events"
-
-#: Environment overrides for the two hosted services, so a deployment never
-#: needs a rebuilt binary to point somewhere else.
-LICENSE_API_ENV_VAR: Final[str] = "BINTEL_LICENSE_API"
-TELEMETRY_API_ENV_VAR: Final[str] = "BINTEL_TELEMETRY_API"
+#: Environment override for the database manifest, so a rebuilt binary is
+#: never needed to point the updater somewhere else.
 MANIFEST_URL_ENV_VAR: Final[str] = "BINTEL_MANIFEST_URL"
 
 #: Values considered "no data". Presented to the user as ``Unknown``.
