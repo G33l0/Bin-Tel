@@ -6,7 +6,7 @@ important decision in the storage design.
 | | Intelligence database | User-data store |
 |---|---|---|
 | File | `bintel.sqlite` | `bintel-user.sqlite` |
-| Contents | BINs, institutions, countries, networks, addresses, provenance | Saved searches, favourites, watchlists, licence, history, templates, telemetry queue |
+| Contents | BINs, institutions, countries, networks, addresses, provenance | Saved searches, favourites, watchlists, history, templates |
 | Lifetime | **Replaceable** — an update swaps the whole file | **Durable** — updates never touch it |
 | Written by | The distribution pipeline | The application, as you use it |
 | Schema version | `SCHEMA_VERSION` in `app/core/constants.py` | `USER_SCHEMA_VERSION` in `app/database/user_store.py` |

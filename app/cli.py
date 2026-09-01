@@ -32,6 +32,7 @@ from app.core.paths import get_paths, reset_paths_cache
 from app.database.engine import DatabaseManager
 from app.database.schema import create_schema, list_indexes, rebuild_indexes, write_metadata
 from app.models.entities import DatabaseMetadata
+from app.services.bin_list import BIN_LIST_FILENAME
 from app.utils.formatting import format_bytes, format_number
 
 logger = get_logger(__name__)
@@ -247,6 +248,100 @@ def _refresh_record_count(manager: DatabaseManager) -> None:
     with manager.transaction() as session:
         count = int(session.execute(select(func.count()).select_from(Bin)).scalar() or 0)
         write_metadata(session, {DatabaseMetadata.RECORD_COUNT: count})
+
+
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    """Rebuild the whole database from the personal BIN list."""
+    from app.services.bin_list import default_bin_list_path
+    from app.services.rebuild_service import RebuildService
+
+    path = _resolve_database(args)
+    list_path = Path(args.list).expanduser() if args.list else default_bin_list_path()
+
+    manager = DatabaseManager(path)
+    if path.exists():
+        manager.open()
+
+    service = RebuildService(manager, path)
+    try:
+        outcome = service.rebuild(
+            list_path,
+            version=args.db_version,
+            progress=lambda message: print(f"  {message}"),
+            allow_shrink=args.allow_shrink,
+        )
+    finally:
+        manager.close()
+
+    print()
+    print(f"Database {outcome.version} is live.")
+    _print_table(
+        [
+            ("Rows read", f"{outcome.accepted:,}"),
+            ("BINs", f"{outcome.distinct_bins:,}"),
+            ("BINs with several entries", f"{outcome.shared_bins:,}"),
+            ("Institutions", f"{outcome.institutions:,}"),
+            ("Ranges", f"{outcome.ranges:,}"),
+            ("Duplicates superseded", f"{outcome.duplicates:,}"),
+            ("Rows skipped", f"{outcome.rejected:,}"),
+            ("Conflicts recorded", f"{outcome.conflicts:,}"),
+            ("Filled in from evidence", outcome.enrichment.summary),
+            ("Replaced version", outcome.previous_version or "none"),
+            ("Rollback available", "yes" if outcome.can_roll_back else "no"),
+            ("Elapsed", f"{outcome.elapsed_seconds:.1f}s"),
+        ]
+    )
+    if outcome.problems:
+        print()
+        print(f"{outcome.rejected:,} row(s) were skipped:")
+        for problem in outcome.problems:
+            print(f"  {problem}")
+        if outcome.rejected > len(outcome.problems):
+            print(f"  … and {outcome.rejected - len(outcome.problems):,} more")
+    return EXIT_OK
+
+
+def cmd_rollback(args: argparse.Namespace) -> int:
+    """Put back the database the last rebuild replaced."""
+    from app.services.rebuild_service import RebuildService
+
+    path = _resolve_database(args)
+    manager = DatabaseManager(path)
+    if path.exists():
+        manager.open()
+    service = RebuildService(manager, path)
+    try:
+        service.rollback()
+    finally:
+        manager.close()
+    print(f"Rolled back. {path} is the previous database again.")
+    print("Run the same command to roll forward: neither copy is discarded.")
+    return EXIT_OK
+
+
+def cmd_check_list(args: argparse.Namespace) -> int:
+    """Read the BIN list and report on it without touching the database."""
+    from app.services.bin_list import default_bin_list_path, read_bin_list
+
+    list_path = Path(args.list).expanduser() if args.list else default_bin_list_path()
+    report = read_bin_list(list_path)
+    print(f"{list_path}")
+    _print_table(
+        [
+            ("Columns used", ", ".join(report.columns)),
+            ("Rows accepted", f"{report.accepted:,}"),
+            ("BINs", f"{report.distinct_bins:,}"),
+            ("BINs with several entries", f"{report.shared_bins:,}"),
+            ("Duplicates superseded", f"{report.duplicates:,}"),
+            ("Rows skipped", f"{report.rejected:,}"),
+        ]
+    )
+    if report.problems:
+        print()
+        for problem in report.problems:
+            print(f"  {problem}")
+        return EXIT_ERROR if args.strict else EXIT_OK
+    return EXIT_OK
 
 
 def cmd_dedupe(args: argparse.Namespace) -> int:
@@ -676,6 +771,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="write straight to production, skipping validation and conflict checks",
     )
     imp.set_defaults(func=cmd_import_data)
+
+    reb = add("rebuild", "rebuild the whole database from the BIN list")
+    reb.add_argument("--list", help=f"path to the list (default: data/{BIN_LIST_FILENAME})")
+    reb.add_argument(
+        "--db-version", dest="db_version", help="version to stamp (default: today's date)"
+    )
+    reb.add_argument(
+        "--allow-shrink",
+        action="store_true",
+        help="build even when the list holds far fewer BINs than the current database",
+    )
+    reb.set_defaults(func=cmd_rebuild)
+
+    rbk = add("rollback", "restore the database the last rebuild replaced")
+    rbk.set_defaults(func=cmd_rollback)
+
+    chk = add("check-list", "read the BIN list and report on it, changing nothing")
+    chk.add_argument("--list", help=f"path to the list (default: data/{BIN_LIST_FILENAME})")
+    chk.add_argument(
+        "--strict", action="store_true", help="exit non-zero if any row was skipped"
+    )
+    chk.set_defaults(func=cmd_check_list)
 
     ded = add("dedupe", "detect and resolve duplicate records")
     ded.add_argument("--dry-run", action="store_true")

@@ -10,6 +10,7 @@ from app.database.integrity import VerificationReport
 from app.importers.base import BaseImporter, ImportSummary
 from app.services.backup_service import BackupService
 from app.services.database_service import DatabaseService
+from app.services.rebuild_service import RebuildOutcome, RebuildService
 from app.workers.base import Worker, WorkerSignals
 
 
@@ -73,3 +74,38 @@ class ImportWorker(Worker[ImportSummary]):
             progress=on_progress,
             cancelled=self.token,
         )
+
+
+class RebuildWorker(Worker[RebuildOutcome]):
+    """Rebuilds the database from the personal BIN list.
+
+    Every step reports itself, because a rebuild replaces the database the
+    application is reading from and the person watching should be able to see
+    exactly how far it has got.
+    """
+
+    def __init__(
+        self,
+        service: RebuildService,
+        list_path: Path | None = None,
+        *,
+        allow_shrink: bool = False,
+    ) -> None:
+        super().__init__(self._execute)
+        self._service = service
+        self._list_path = list_path
+        self._allow_shrink = allow_shrink
+
+    def _execute(self) -> RebuildOutcome:
+        return self._service.rebuild(
+            self._list_path,
+            progress=lambda message: self.signals.progress.emit(message),
+            allow_shrink=self._allow_shrink,
+        )
+
+
+class RollbackWorker(Worker[Path]):
+    """Puts back the database the last rebuild replaced."""
+
+    def __init__(self, service: RebuildService) -> None:
+        super().__init__(service.rollback)

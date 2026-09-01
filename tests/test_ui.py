@@ -54,8 +54,6 @@ def window(context, themes, qapp):
     settings = context.config.settings
     settings.database.automatic_updates = False
     settings.database.check_mode = UpdateCheckMode.MANUAL
-    settings.license.revalidate_on_startup = False
-    settings.privacy.telemetry_enabled = False
 
     win = MainWindow(context, themes)
     win.resize(1280, 800)
@@ -111,56 +109,31 @@ def test_the_bin_page_offers_quick_and_advanced_tabs(window):
     ]
 
 
-def test_advanced_search_is_gated_on_the_free_plan(window):
-    from app.licensing.plans import Feature
+def test_every_page_is_reachable_and_none_is_gated(window, qapp):
+    """A personal tool hides nothing: every navigation entry opens its page."""
+    from app.ui.widgets.sidebar import NAV_ITEMS
 
+    for item in NAV_ITEMS:
+        button = window.sidebar._buttons[item.key]
+        assert button.isEnabled(), f"{item.key} must stay usable"
+        assert not button.isHidden(), f"{item.key} must stay visible"
+        window.navigate(item.key)
+        pump(20)
+        assert window.stack.currentWidget() is window.pages[item.key]
+
+
+def test_the_advanced_search_panel_is_always_available(window):
     window.navigate("bin_lookup")
     page = window.bin_page
     page.refresh()
-    granted = window.context.entitlements.has_feature(Feature.ADVANCED_SEARCH)
-    assert page.advanced_gate.unlocked is granted
-    assert not granted, "the fixture context is on the Free plan"
+    assert page.advanced_panel.isEnabled()
 
 
-def test_activating_a_plan_unlocks_the_gate(window, context, qapp):
-    from app.core.config import LicenseServiceMode
+def test_an_ampersand_in_a_label_is_not_read_as_an_accelerator(qapp):
+    from app.ui.widgets.sidebar import NavButton, NavItem
 
-    context.config.settings.license.service_mode = LicenseServiceMode.DEVELOPMENT
-    context.reconfigure_licensing()
-    context.licenses.activate("BINTEL-DEV-BUSINESS")
-    pump(30)
-
-    window.bin_page.refresh()
-    assert window.bin_page.advanced_gate.unlocked
-
-    window.navigate("analytics")
-    pump(60)
-    assert window.pages["analytics"].gate.unlocked
-
-
-def test_locked_pages_stay_visible_with_an_upgrade_prompt(window, qapp):
-    """A paid page is never hidden — it explains itself and stays usable."""
-    window.navigate("analytics")
-    pump(60)
-    page = window.pages["analytics"]
-    assert not page.gate.unlocked
-    assert page.gate.prompt.upgrade_button.text().startswith("Upgrade to")
-
-
-def test_the_sidebar_badges_paid_entries_rather_than_hiding_them(window):
-    from app.ui.widgets.sidebar import NAV_ITEMS
-
-    gated = [item for item in NAV_ITEMS if item.feature]
-    assert gated
-    for item in gated:
-        button = window.sidebar._buttons[item.key]
-        assert button.isEnabled(), "a paid entry stays usable, it is never disabled"
-        assert not button.isHidden(), "a paid entry is badged, never hidden"
-
-
-def test_an_ampersand_in_a_label_is_not_read_as_an_accelerator(window):
-    button = window.sidebar._buttons["license"]
-    assert "&&" in button.text() or "&" in button.item.label
+    button = NavButton(NavItem("demo", "Plan & Licence", "backup"))
+    assert "&&" in button.text()
 
 
 def test_the_command_palette_finds_a_page(window, qapp):
@@ -181,8 +154,7 @@ def test_the_settings_page_exposes_every_tab(window):
         "Search",
         "Watchlists",
         "Reports",
-        "Licence",
-        "Privacy & Telemetry",
+        "Privacy",
         "Advanced",
     ]
 

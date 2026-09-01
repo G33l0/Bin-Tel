@@ -18,11 +18,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.core.constants import (
-    DEFAULT_LICENSE_API_URL,
-    DEFAULT_MANIFEST_URL,
-    DEFAULT_TELEMETRY_URL,
-)
+from app.core.constants import DEFAULT_MANIFEST_URL
 from app.core.paths import AppPaths, get_paths
 
 
@@ -124,21 +120,6 @@ class InstallPolicy(StrEnum):
         }[self]
 
 
-class LicenseServiceMode(StrEnum):
-    """Which licensing service the client talks to."""
-
-    HOSTED = "hosted"
-    DEVELOPMENT = "development"
-
-    @property
-    def label(self) -> str:
-        return (
-            "Bin-Tel licensing service"
-            if self is LicenseServiceMode.HOSTED
-            else "Local development service"
-        )
-
-
 class LogLevel(StrEnum):
     DEBUG = "DEBUG"
     INFO = "INFO"
@@ -221,45 +202,10 @@ class ReportSettings(_Section):
     max_report_rows: int = Field(default=10_000, ge=100, le=1_000_000)
 
 
-class LicenseSettings(_Section):
-    service_mode: LicenseServiceMode = LicenseServiceMode.HOSTED
-    api_url: str = DEFAULT_LICENSE_API_URL
-    #: Base64 public key licences are verified against. Empty means "use the
-    #: key compiled into this build".
-    verifying_key: str = ""
-    revalidate_on_startup: bool = True
-
-    @field_validator("api_url")
-    @classmethod
-    def _validate_api_url(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            return DEFAULT_LICENSE_API_URL
-        if not value.startswith(("https://", "http://")):
-            raise ValueError("The licensing API URL must start with https:// or http://")
-        return value
-
-
 class PrivacySettings(_Section):
-    """Telemetry is off until the user turns it on."""
+    """What the application keeps about the way it is used — locally, only."""
 
-    telemetry_enabled: bool = False
-    telemetry_url: str = DEFAULT_TELEMETRY_URL
-    #: Whether the user has been shown the telemetry explanation at least once.
-    telemetry_prompted: bool = False
-    crash_reports: bool = False
     remember_search_history: bool = True
-    share_database_diagnostics: bool = False
-
-    @field_validator("telemetry_url")
-    @classmethod
-    def _validate_telemetry_url(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            return DEFAULT_TELEMETRY_URL
-        if not value.startswith(("https://", "http://")):
-            raise ValueError("The telemetry URL must start with https:// or http://")
-        return value
 
 
 class AdvancedSettings(_Section):
@@ -281,7 +227,6 @@ class Settings(BaseModel):
     search: SearchSettings = Field(default_factory=SearchSettings)
     watchlists: WatchlistSettings = Field(default_factory=WatchlistSettings)
     reports: ReportSettings = Field(default_factory=ReportSettings)
-    license: LicenseSettings = Field(default_factory=LicenseSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
 
@@ -308,7 +253,6 @@ class Settings(BaseModel):
             "search": SearchSettings,
             "watchlists": WatchlistSettings,
             "reports": ReportSettings,
-            "license": LicenseSettings,
             "privacy": PrivacySettings,
             "advanced": AdvancedSettings,
         }
@@ -349,9 +293,7 @@ class AppState(BaseModel):
     last_known_remote_version: str = ""
     search_history: list[str] = Field(default_factory=list)
     active_page: str = "dashboard"
-    last_license_check: datetime | None = None
     last_change_scan: datetime | None = None
-    last_telemetry_flush: datetime | None = None
     dismissed_notices: list[str] = Field(default_factory=list)
     onboarding_completed: bool = False
 

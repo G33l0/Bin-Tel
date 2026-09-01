@@ -59,6 +59,13 @@ class BinResultCard(QWidget):
         self.issuer_label.setWordWrap(True)
         headline_column.addWidget(self.issuer_label)
 
+        # Who uses the BIN *now*, spelled out beneath the name(s). One line,
+        # always present, so the reader never has to infer tense.
+        self.usage_label = QLabel("", self.headline)
+        self.usage_label.setWordWrap(True)
+        self.usage_label.setAccessibleName("Who currently uses this BIN")
+        headline_column.addWidget(self.usage_label)
+
         self.chip_row = hbox(spacing=6)
         headline_column.addLayout(self.chip_row)
 
@@ -152,7 +159,7 @@ class BinResultCard(QWidget):
 
         self.bin_label.setText(format_bin(record.bin))
         self.bin_label.setAccessibleName(f"BIN {record.bin}")
-        self.issuer_label.setText(record.issuer_name)
+        self._render_usage(record)
 
         # Chips summarise the record at a glance.
         while self.chip_row.count():
@@ -200,6 +207,57 @@ class BinResultCard(QWidget):
             f"Record last updated {updated}." if updated != UNKNOWN_DISPLAY else ""
         )
 
+    def _render_usage(self, record: BinRecord) -> None:
+        """State who uses this BIN now, and who stopped — never one for the other."""
+        provider = IconProvider.instance()
+        current = record.current_issuers
+        former = record.former_issuers
+
+        if not current:
+            # Nobody issues here now. Naming a former issuer in the headline
+            # would be read as the present one, so the headline says so and the
+            # predecessor is named beneath it, with its end date.
+            self.issuer_label.setText("No current issuer recorded")
+            self.issuer_label.setAccessibleName("No institution currently uses this BIN")
+            if former:
+                # The advisory carries the names and dates; this line only has
+                # to settle the tense, so it stays short.
+                self.usage_label.setText(
+                    f"No institution currently uses this BIN. "
+                    f"{len(former)} former issuer(s) recorded."
+                )
+            else:
+                self.usage_label.setText(
+                    "This prefix is allocated, but no institution relationship is "
+                    "recorded for it."
+                )
+            self.usage_label.setStyleSheet(f"color: {provider.theme.warning};")
+            self.usage_label.show()
+            return
+
+        self.issuer_label.setText(record.issuer_name)
+        self.issuer_label.setAccessibleName(
+            f"Currently used by {record.issuer_name.replace(' · ', ', ')}"
+        )
+
+        if len(current) > 1:
+            self.usage_label.setText(
+                f"{len(current)} institutions currently use this BIN."
+            )
+            self.usage_label.setStyleSheet(f"color: {provider.theme.warning};")
+        elif former:
+            names = "; ".join(
+                f"{item.display_name} ({item.ended_label.lower()})" for item in former
+            )
+            self.usage_label.setText(f"Currently in use. Previously used by {names}.")
+            self.usage_label.setStyleSheet("")
+            self.usage_label.setProperty("role", "muted")
+        else:
+            self.usage_label.setText("Currently in use.")
+            self.usage_label.setStyleSheet("")
+            self.usage_label.setProperty("role", "muted")
+        self.usage_label.show()
+
     def _render_institutions(self, record: BinRecord) -> None:
         while self._institutions_layout.count():
             item = self._institutions_layout.takeAt(0)
@@ -207,21 +265,30 @@ class BinResultCard(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
-        # A single current issuer needs no list. Anything else does — a
-        # historical relationship or a second claim is exactly what a reader
-        # must not be left to discover for themselves.
-        if len(record.institutions) < 2:
+        # A single current issuer needs no list. Anything else does — a second
+        # claim, a historical relationship, or a lone relationship that is not
+        # a current issuer is exactly what a reader must not be left to
+        # discover for themselves.
+        only_current_issuer = (
+            len(record.institutions) == 1 and record.institutions[0].is_currently_issuing
+        )
+        if not record.institutions or only_current_issuer:
             self.institutions_card.hide()
             return
 
         provider = IconProvider.instance()
-        current = len(record.current_institutions)
-        historical = len(record.historical_institutions)
-        subtitle = f"{current} current"
-        if historical:
-            subtitle += f", {historical} historical"
+        issuing = len(record.current_issuers)
+        former = len(record.former_issuers)
+        other = len(record.institutions) - issuing - former
+        parts = [
+            f"{issuing} currently issuing" if issuing else "none currently issuing"
+        ]
+        if former:
+            parts.append(f"{former} former")
+        if other > 0:
+            parts.append(f"{other} other relationship(s)")
         self.institutions_header.set_subtitle(
-            f"{subtitle}. Every recorded relationship is shown."
+            ", ".join(parts) + ". Every recorded relationship is shown."
         )
 
         for institution in record.institutions:
@@ -238,17 +305,20 @@ class BinResultCard(QWidget):
 
             # Standing first: a former issuer read as a current one is the
             # most misleading thing this card could show.
+            # Standing is stated in the tense the relationship actually has:
+            # "Current" beside a former issuer would be a contradiction the
+            # reader has to unpick.
+            issuing_now = institution.is_currently_issuing
             standing = Chip(
-                institution.standing_label,
+                "Uses this BIN" if issuing_now else institution.standing_label,
                 row,
-                accent=provider.theme.success
-                if institution.is_current
-                else provider.theme.warning,
+                accent=provider.theme.success if issuing_now else provider.theme.warning,
             )
             standing.setToolTip(
-                "This relationship applies now"
-                if institution.is_current
-                else "This relationship has been superseded"
+                "This institution currently uses this BIN"
+                if issuing_now
+                else institution.ended_label
+                or "This relationship does not assert current issuance"
             )
             row_layout.addWidget(standing, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -295,7 +365,12 @@ class BinResultCard(QWidget):
         parts: list[str] = []
         if result.match_label:
             parts.append(f"Match: {result.match_label}")
-        if result.confidence_level and result.confidence_level != "unknown":
+        if result.is_conflicted:
+            # No percentage here. The figure measures how well one relationship
+            # is evidenced; printing it beside "Conflicted" reads as "90% sure",
+            # which is the opposite of what a conflict means.
+            parts.append("Confidence: Conflicted — the records disagree")
+        elif result.confidence_level and result.confidence_level != "unknown":
             parts.append(
                 f"Confidence: {result.confidence_level.capitalize()} "
                 f"({result.confidence_percent}%)"
@@ -306,6 +381,27 @@ class BinResultCard(QWidget):
 
     def _render_advisory(self, result: BinLookupResult) -> None:
         """Say plainly when the answer needs qualifying."""
+        record = result.best
+        if record is not None and record.has_shared_issuance:
+            names = ", ".join(item.display_name for item in record.current_issuers)
+            self._advise(
+                f"{len(record.current_issuers)} institutions are recorded as currently "
+                f"using this BIN: {names}. All of them are shown, and none has been "
+                "chosen over the others.",
+                StateKind.WARNING,
+            )
+            return
+        if record is not None and not record.issuer_is_known and record.former_issuers:
+            names = "; ".join(
+                f"{item.display_name} ({item.ended_label.lower()})"
+                for item in record.former_issuers
+            )
+            self._advise(
+                "No institution currently uses this BIN. It was previously used by "
+                f"{names}. The former issuer is not presented as the current one.",
+                StateKind.WARNING,
+            )
+            return
         if result.is_conflicted:
             names = ", ".join(
                 item.display_name for item in result.conflicting_institutions

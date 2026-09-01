@@ -6,7 +6,6 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QComboBox, QLabel, QPushButton, QWidget
 
 from app.core.errors import ValidationError
-from app.licensing.plans import Feature
 from app.models.schemas import (
     BankLookupResult,
     BinFilters,
@@ -27,7 +26,6 @@ from app.ui.widgets.cards import Card, SectionHeader
 from app.ui.widgets.charts import BarChart, DonutChart
 from app.ui.widgets.search_box import SearchBox
 from app.ui.widgets.states import EmptyState, ErrorState, LoadingState
-from app.ui.widgets.upgrade_prompt import FeatureGate
 from app.utils.qt_helpers import expanding_spacer, hbox, shortcut, vbox
 from app.workers.base import Worker, run_in_background
 from app.workers.search_worker import (
@@ -152,13 +150,7 @@ class InstitutionIntelligencePage(BasePage):
             charts_row.addWidget(holder, 1)
         analytics_card.body.addLayout(charts_row)
 
-        self.analytics_gate = FeatureGate(
-            analytics_card, Feature.INSTITUTION_INTELLIGENCE, self.profile, compact=True
-        )
-        self.analytics_gate.upgrade_requested.connect(
-            lambda feature: self.navigate(f"license:{feature}")
-        )
-        profile_layout.addWidget(self.analytics_gate)
+        profile_layout.addWidget(analytics_card)
 
         for widget in (
             self.idle_state,
@@ -182,10 +174,6 @@ class InstitutionIntelligencePage(BasePage):
         )
         if self.stack.currentWidget() is self.idle_state:
             self.focus_search()
-
-    def refresh(self) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.INSTITUTION_INTELLIGENCE)
-        self.analytics_gate.apply(entitlement)
 
     def focus_search(self) -> None:
         self.search.focus()
@@ -241,9 +229,6 @@ class InstitutionIntelligencePage(BasePage):
             result_count=len(result.matches),
             elapsed_ms=result.elapsed_ms,
         )
-        from app.telemetry.events import Counter
-
-        self.context.telemetry.increment(Counter.INSTITUTION_LOOKUP_COUNT)
         self.select_institution(self._matches[0].id)
 
     def _on_failed(self, exc: BaseException) -> None:
@@ -298,12 +283,11 @@ class InstitutionIntelligencePage(BasePage):
         options_worker.signals.result.connect(self.result_view.set_filter_options)
         run_in_background(options_worker)
 
-        if self.context.entitlements.has_feature(Feature.INSTITUTION_INTELLIGENCE):
-            analytics_worker: Worker = Worker(
-                self.context.analytics.institution_analytics, match.id
-            )
-            analytics_worker.signals.result.connect(self._apply_analytics)
-            run_in_background(analytics_worker)
+        analytics_worker: Worker = Worker(
+            self.context.analytics.institution_analytics, match.id
+        )
+        analytics_worker.signals.result.connect(self._apply_analytics)
+        run_in_background(analytics_worker)
 
         self._load_page(match.id, self.result_view.current_request(1))
 
@@ -346,10 +330,6 @@ class InstitutionIntelligencePage(BasePage):
     def _add_to_watchlist(self) -> None:
         if self._current is None:
             return
-        entitlement = self.context.entitlements.entitlement(Feature.WATCHLISTS)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
-            return
         AddToWatchlistDialog.add(
             self,
             self.context,
@@ -361,10 +341,6 @@ class InstitutionIntelligencePage(BasePage):
 
     def _toggle_favorite(self) -> None:
         if self._current is None:
-            return
-        entitlement = self.context.entitlements.entitlement(Feature.FAVORITES)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
             return
         added = self.context.workspace.toggle_favorite(
             FavoriteKind.INSTITUTION,
@@ -378,7 +354,6 @@ class InstitutionIntelligencePage(BasePage):
     def _generate_report(self) -> None:
         if self._current is None:
             return
-        entitlement = self.context.entitlements.entitlement(Feature.PDF_REPORTS)
         institution = self._current
 
         def build(rows: list[BinRow]) -> None:
@@ -415,7 +390,6 @@ class InstitutionIntelligencePage(BasePage):
             )
             self.toast(f"Report written to {result.path.name}")
 
-        _ = entitlement
         worker = AllBinsWorker(self.context.banks, institution.id)
         worker.signals.result.connect(build)
         worker.signals.failed.connect(lambda exc: self.show_error(exc))
@@ -438,10 +412,6 @@ class InstitutionIntelligencePage(BasePage):
         if self._current is None or not rows:
             self.toast("There is nothing to export")
             return
-        cap = self.context.search.export_cap()
-        if cap is not None and len(rows) > cap:
-            rows = rows[:cap]
-            self.toast(f"Your plan exports up to {cap:,} rows")
         chosen = ExportDialog.choose(
             self,
             self._current.display_name,
@@ -465,6 +435,5 @@ class InstitutionIntelligencePage(BasePage):
         for state in (self.idle_state, self.empty_state, self.error_state):
             state.refresh_icon()
         self.result_view.refresh_theme()
-        self.analytics_gate.refresh_theme()
         for chart in self.charts.values():
             chart.update()  # type: ignore[attr-defined]

@@ -43,17 +43,10 @@ def test_a_saved_search_needs_a_name(workspace):
         workspace.save_search("   ")
 
 
-def test_the_plan_limit_on_saved_searches_is_enforced(workspace):
-    workspace.save_search("First", limit=1)
-    with pytest.raises(ValidationError) as excinfo:
-        workspace.save_search("Second", limit=1)
-    assert "upgrade" in str(excinfo.value.message).lower()
-
-
-def test_an_unlimited_plan_is_not_capped(workspace):
-    for index in range(5):
-        workspace.save_search(f"Search {index}", limit=-1)
-    assert workspace.saved_search_count() == 5
+def test_saved_searches_are_not_capped(workspace):
+    for index in range(25):
+        workspace.save_search(f"Search {index}")
+    assert workspace.saved_search_count() == 25
 
 
 def test_pinned_searches_sort_first(workspace):

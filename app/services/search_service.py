@@ -1,12 +1,10 @@
-"""Advanced search, wired to entitlements and the user's workspace."""
+"""Advanced search, wired to the user's workspace."""
 
 from __future__ import annotations
 
 import time
 
 from app.core.logging_config import get_logger
-from app.licensing.entitlements import EntitlementService
-from app.licensing.plans import Feature, Limit
 from app.models.schemas import (
     AdvancedQuery,
     AdvancedSearchResult,
@@ -28,19 +26,13 @@ class SearchService:
         self,
         repository: SearchRepository,
         workspace: WorkspaceService,
-        entitlements: EntitlementService,
     ) -> None:
         self._repository = repository
         self._workspace = workspace
-        self._entitlements = entitlements
 
     @property
     def available(self) -> bool:
         return self._repository.is_available
-
-    @property
-    def is_entitled(self) -> bool:
-        return self._entitlements.has_feature(Feature.ADVANCED_SEARCH)
 
     def search(
         self,
@@ -74,16 +66,9 @@ class SearchService:
     def count(self, query: AdvancedQuery) -> int:
         return self._repository.count(query)
 
-    def export_rows(self, query: AdvancedQuery) -> list[BinRow]:
-        """Rows for an export, capped at the plan's export quota."""
-        limit = self._entitlements.limit(Limit.EXPORT_ROWS, 500)
-        maximum = 250_000 if limit < 0 else limit
-        return self._repository.all_rows(query, limit=maximum)
-
-    def export_cap(self) -> int | None:
-        """The export row cap, or ``None`` when unlimited."""
-        limit = self._entitlements.limit(Limit.EXPORT_ROWS, 500)
-        return None if limit < 0 else limit
+    def export_rows(self, query: AdvancedQuery, limit: int = 250_000) -> list[BinRow]:
+        """Rows for an export. The cap only guards memory, not a quota."""
+        return self._repository.all_rows(query, limit=limit)
 
     def suggest(self, term: str, limit: int = 8) -> list[tuple[str, str, str]]:
         return self._repository.suggest(term, limit)

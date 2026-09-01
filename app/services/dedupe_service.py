@@ -59,6 +59,9 @@ class DedupeReport:
     duplicate_links_removed: int = 0
     range_conflicts_recorded: int = 0
     duplicate_bins: int = 0
+    #: Blocking keys that grew too broad to compare pairwise. Reported rather
+    #: than hidden: it is the reason a pair might not have been considered.
+    blocks_skipped: int = 0
     review_candidates: list[MergeCandidate] = field(default_factory=list)
     merged: list[MergeCandidate] = field(default_factory=list)
     conflicts_recorded: int = 0
@@ -248,6 +251,16 @@ class DedupeService:
         return recorded
 
     # -- institution merging ----------------------------------------------
+    #: Largest weak bucket still worth comparing pairwise.
+    #:
+    #: A blocking key exists to *narrow* the search. A leading word shared by
+    #: hundreds of institutions — "first", "banco", "bank" — narrows nothing,
+    #: and comparing every pair inside it is quadratic: 400 institutions in one
+    #: bucket is 79,800 comparisons, each hitting the database twice. Such a
+    #: bucket is skipped, and its members are still compared through the exact
+    #: and acronym keys, which are the ones that actually discriminate.
+    MAX_WEAK_BLOCK = 60
+
     @staticmethod
     def _blocking_keys(institution: Institution) -> set[str]:
         """Cheap keys that put plausible duplicates in the same bucket.
@@ -284,8 +297,18 @@ class DedupeService:
         compared: set[tuple[int, int]] = set()
         merged_away: set[int] = set()
 
-        for candidates in groups.values():
+        for key, candidates in groups.items():
             if len(candidates) < 2:
+                continue
+            # An exact normalized-name bucket is strong evidence at any size,
+            # so it is always compared. A weak key that has attracted a crowd
+            # has stopped discriminating, and is skipped rather than scanned.
+            if not key.startswith("core:") and len(candidates) > self.MAX_WEAK_BLOCK:
+                report.blocks_skipped += 1
+                logger.debug(
+                    "Blocking key too broad to compare pairwise",
+                    extra={"context": {"key": key, "size": len(candidates)}},
+                )
                 continue
             for index, anchor in enumerate(candidates):
                 if anchor.id in merged_away:

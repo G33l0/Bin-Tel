@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
 )
 
 from app.core.errors import ValidationError
-from app.licensing.plans import Feature, Limit
 from app.models.user_entities import WatchTargetType
 from app.services.report_service import ReportFormat
 from app.services.watchlist_service import WatchAlert, WatchedItem, WatchlistSummary
@@ -26,7 +25,6 @@ from app.ui.themes.icons import IconProvider
 from app.ui.widgets.adaptive_stack import AdaptiveStack
 from app.ui.widgets.cards import Card, Chip, SectionHeader
 from app.ui.widgets.states import EmptyState, StateBanner, StateKind
-from app.ui.widgets.upgrade_prompt import FeatureGate
 from app.utils.formatting import format_datetime_with_relative, format_relative
 from app.utils.qt_helpers import expanding_spacer, hbox, vbox
 from app.workers.base import Worker, run_in_background
@@ -157,15 +155,10 @@ class WatchlistsPage(BasePage):
         splitter.setSizes([280, 700])
         body_layout.addWidget(splitter, 1)
 
-        self.gate = FeatureGate(body, Feature.WATCHLISTS, self.surface)
-        self.gate.upgrade_requested.connect(lambda feature: self.navigate(f"license:{feature}"))
-        self.content.addWidget(self.gate, 1)
+        self.content.addWidget(body, 1)
 
     # -- lifecycle ---------------------------------------------------------
     def refresh(self) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.WATCHLISTS)
-        if not self.gate.apply(entitlement):
-            return
         self._reload()
 
     def _reload(self) -> None:
@@ -184,11 +177,9 @@ class WatchlistsPage(BasePage):
             self.list_widget.addItem(item)
         self.list_widget.blockSignals(False)
 
-        limit = self.context.entitlements.limit(Limit.WATCHLISTS, 0)
-        self.quota_label.setText(
-            f"{len(self._watchlists)} of {'unlimited' if limit < 0 else limit} watchlist(s)"
-        )
-        self.new_button.setEnabled(limit < 0 or len(self._watchlists) < limit)
+        count = len(self._watchlists)
+        self.quota_label.setText(f"{count} watchlist(s)")
+        self.new_button.setEnabled(True)
 
         has_any = bool(self._watchlists)
         self.detail_stack.setCurrentWidget(self.detail if has_any else self.empty_state)
@@ -257,18 +248,6 @@ class WatchlistsPage(BasePage):
 
     # -- actions -----------------------------------------------------------
     def _create(self) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.WATCHLISTS)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
-            return
-        limit = self.context.entitlements.limit(Limit.WATCHLISTS, 0)
-        if 0 <= limit <= len(self._watchlists):
-            self.banner.show_message(
-                f"Your plan includes {limit} watchlist(s).",
-                StateKind.WARNING,
-                action_text="See plans",
-            )
-            return
         result = CreateWatchlistDialog.ask(self)
         if result is None:
             return
@@ -278,9 +257,6 @@ class WatchlistsPage(BasePage):
         except ValidationError as exc:
             self.banner.show_message(exc.message, StateKind.DANGER)
             return
-        from app.telemetry.events import Event
-
-        self.context.telemetry.record(Event.WATCHLIST_CREATED, {"item_count_bucket": "0"})
         self._current = summary
         self._reload()
         self.toast(f"Created “{summary.name}”")
@@ -397,7 +373,6 @@ class WatchlistsPage(BasePage):
         self.toast(f"Exported to {result.path.name}")
 
     def on_theme_changed(self) -> None:
-        self.gate.refresh_theme()
         self.empty_state.refresh_icon()
         if self._current is not None:
             self._load_detail()

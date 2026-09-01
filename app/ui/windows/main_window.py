@@ -28,7 +28,6 @@ from app.ui.pages.bin_lookup_page import BinLookupPage
 from app.ui.pages.dashboard_page import DashboardPage
 from app.ui.pages.database_page import DatabasePage
 from app.ui.pages.institution_page import InstitutionIntelligencePage
-from app.ui.pages.license_page import LicensePage
 from app.ui.pages.reports_page import ReportsPage
 from app.ui.pages.settings_page import SettingsPage
 from app.ui.pages.updates_page import UpdatesPage
@@ -110,7 +109,6 @@ class MainWindow(QMainWindow):
             DatabasePage,
             DatabaseAdminPage,
             UpdatesPage,
-            LicensePage,
             SettingsPage,
             AboutPage,
         ):
@@ -126,7 +124,6 @@ class MainWindow(QMainWindow):
         settings_page.database_path_changed.connect(self.on_database_changed)
         settings_page.search_settings_changed.connect(self._apply_search_settings)
         settings_page.set_theme_catalogue(self.themes.themes)
-        settings_page.license_changed.connect(self._on_entitlements_changed)
 
         self.updates_page.navigation_requested.connect(self._handle_special_navigation)
         self.admin_page.navigation_requested.connect(self._handle_special_navigation)
@@ -140,11 +137,6 @@ class MainWindow(QMainWindow):
         self.palette.set_result_provider(self._palette_search)
         self.palette.result_chosen.connect(self._on_palette_result)
 
-        # Entitlements drive navigation badges and page gating.
-        self._entitlement_unsubscribe = context.entitlements.subscribe(
-            self._on_entitlements_changed
-        )
-
         # -- status bar -------------------------------------------------------
         status = QStatusBar(self)
         status.setSizeGripEnabled(True)
@@ -152,6 +144,10 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("", status)
         status.addWidget(self.status_label, 1)
+
+        self._status_timer = QTimer(self)
+        self._status_timer.setSingleShot(True)
+        self._status_timer.timeout.connect(lambda: self.status_label.setText(""))
 
         self.database_label = QLabel("", status)
         self.database_label.setProperty("role", "muted")
@@ -166,10 +162,8 @@ class MainWindow(QMainWindow):
         self.themes.theme_changed.connect(lambda _: self.on_theme_changed())
         self.refresh_database_status()
 
-        self.sidebar.apply_entitlements(context.entitlements)
         self.refresh_alert_badges()
 
-        QTimer.singleShot(1200, self._maybe_revalidate_license)
         QTimer.singleShot(1500, self._maybe_check_for_updates)
 
     # -- convenience accessors --------------------------------------------
@@ -194,10 +188,6 @@ class MainWindow(QMainWindow):
         return self.pages["admin"]  # type: ignore[return-value]
 
     @property
-    def license_page(self) -> LicensePage:
-        return self.pages["license"]  # type: ignore[return-value]
-
-    @property
     def watchlists_page(self) -> WatchlistsPage:
         return self.pages["watchlists"]  # type: ignore[return-value]
 
@@ -218,8 +208,6 @@ class MainWindow(QMainWindow):
             self.bank_page.select_institution(int(argument))
         elif target == "institutions" and argument.isdigit():
             self.pages["institutions"].select_institution(int(argument))  # type: ignore[attr-defined]
-        elif target == "license" and argument:
-            self.license_page.highlight_feature(argument)
 
     def _handle_special_navigation(self, key: str) -> None:
         if key == "__database_reloaded__":
@@ -286,20 +274,22 @@ class MainWindow(QMainWindow):
     # -- status ------------------------------------------------------------
     def show_status(self, message: str, timeout_ms: int = 6000) -> None:
         self.status_label.setText(message)
+        # The timer is a child of the window, so closing the window destroys it
+        # rather than leaving it to fire into a deleted label.
+        self._status_timer.stop()
         if message:
-            QTimer.singleShot(timeout_ms, lambda: self.status_label.setText(""))
+            self._status_timer.start(timeout_ms)
 
     def show_toast(self, message: str) -> None:
         Toast.show_message(self, message)
 
     def refresh_database_status(self) -> None:
-        plan = self.context.entitlements.plan.label
         if not self.context.database.is_open:
-            self.database_label.setText(f"{plan} · Database: not installed")
+            self.database_label.setText("Database: not installed")
             return
         info = self.context.stats.info()
         self.database_label.setText(
-            f"{plan} · Database {info.version or 'unknown'} · {info.stats.bins:,} BINs"
+            f"Database {info.version or 'unknown'} · {info.stats.bins:,} BINs"
         )
 
     def on_database_changed(self) -> None:
@@ -328,17 +318,6 @@ class MainWindow(QMainWindow):
         logger.info("Running the scheduled update check")
         self.updates_page.check_for_updates(silent=True)
 
-    def _maybe_revalidate_license(self) -> None:
-        """Re-verify the licence when its grace window is running down."""
-        if not self.context.config.settings.license.revalidate_on_startup:
-            return
-        snapshot = self.context.licenses.snapshot
-        if not snapshot.is_activated or not snapshot.needs_revalidation:
-            return
-        worker: Worker = Worker(self.context.licenses.revalidate)
-        worker.signals.result.connect(lambda _: self._on_entitlements_changed())
-        run_in_background(worker)
-
     # -- shortcuts ---------------------------------------------------------
     def _install_shortcuts(self) -> None:
         shortcut(self, "Ctrl+K", self.open_palette)
@@ -353,7 +332,6 @@ class MainWindow(QMainWindow):
         shortcut(self, "Ctrl+7", lambda: self.navigate("reports"))
         shortcut(self, "Ctrl+D", lambda: self.navigate("database"))
         shortcut(self, "Ctrl+U", lambda: self.navigate("updates"))
-        shortcut(self, "Ctrl+L", lambda: self.navigate("license"))
         shortcut(self, "Ctrl+,", lambda: self.navigate("settings"))
         shortcut(self, "Ctrl+B", self.toggle_sidebar)
         shortcut(self, "Ctrl+T", self.cycle_theme)
@@ -371,7 +349,6 @@ class MainWindow(QMainWindow):
             Command("scan_watchlists", "Check watchlists for changes", "", ("alerts", "diff")),
             Command("new_report", "Build a report", "", ("export", "pdf", "csv")),
             Command("open_data_folder", "Open the application data folder", "", ("files", "storage")),
-            Command("compare_plans", "Compare plans", "", ("upgrade", "pricing", "licence")),
         ]
 
     def open_palette(self) -> None:
@@ -472,7 +449,6 @@ class MainWindow(QMainWindow):
             ),
             "new_report": lambda: self.navigate("reports"),
             "open_data_folder": self._open_data_folder,
-            "compare_plans": lambda: (self.navigate("license"), self.license_page.show_plans()),
         }
         action = actions.get(key)
         if action is not None:
@@ -482,15 +458,6 @@ class MainWindow(QMainWindow):
         from app.utils.qt_helpers import reveal_in_file_manager
 
         reveal_in_file_manager(self.context.paths.data_dir)
-
-    # -- entitlements -------------------------------------------------------
-    def _on_entitlements_changed(self) -> None:
-        """Re-badge navigation and re-gate pages after a plan change."""
-        self.sidebar.apply_entitlements(self.context.entitlements)
-        current = self.stack.currentWidget()
-        if isinstance(current, BasePage):
-            current.refresh()
-        self.refresh_database_status()
 
     def refresh_alert_badges(self) -> None:
         """Show unread watchlist alerts on the navigation entry."""

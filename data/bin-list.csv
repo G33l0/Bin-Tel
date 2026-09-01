@@ -1,0 +1,50 @@
+# Bin-Tel — personal BIN list
+#
+# This file is the source of truth for the database. Add rows here, rebuild,
+# and the application is looking at the new data:
+#
+#     python -m app.cli rebuild
+#
+# or, in the app: Database → Rebuild from BIN list.
+#
+# Only `bin` and `bank` are required. Leave anything else blank.
+# Lines starting with # are ignored, so you can keep notes in here.
+#
+#   bin            6 to 8 digits. 8-digit BINs are stored as 8-digit BINs —
+#                  they are never shortened to 6 and never invented from a 6.
+#   bin_high       for a range: the last BIN in it (leave blank for a single BIN)
+#   range_type     issuer_range | account_range | product_range
+#   relationship   issuer (default) | former_issuer | program_issuer |
+#                  subsidiary | associated_institution
+#   effective_from / effective_to
+#                  YYYY-MM-DD. A row with an end date describes a *former*
+#                  issuer, and Bin-Tel reads it that way.
+#
+# A BIN may appear on SEVERAL rows — that is how the interesting cases are
+# recorded, and all of them are kept.
+#
+#   Two banks both using one BIN now. Both are named in the result; neither is
+#   chosen over the other, and the result is marked Conflicted:
+#
+#     520001,Harbor Mutual
+#     520001,Pacific Savings
+#
+#   One bank replacing another. Give the outgoing one relationship
+#   `former_issuer` and an `effective_to`. The result names the successor as
+#   the current issuer and reports the predecessor as stopped on that date.
+#   (Columns beyond `bank` are left blank here for readability.)
+#
+#     bin,bank,relationship,effective_from,effective_to
+#     530001,Old Bank,former_issuer,2019-01-01,2024-06-30
+#     530001,New Bank,,2024-07-01,
+#
+#   A BIN nobody uses any more: a former_issuer row with no successor. The
+#   result says "No current issuer recorded" and names who stopped, and when.
+#   A former issuer is NEVER presented as the current one.
+#
+# Only a row repeating the SAME bank, relationship and period is a correction.
+#
+# Never put a full card number, CVV, PIN or cardholder name in this file.
+# The reader refuses anything longer than 8 digits for exactly that reason.
+#
+bin,bank,bin_high,range_type,network,brand,card_type,funding_type,prepaid,commercial,country,currency,city,state,website,phone,legal_name,parent,relationship,effective_from,effective_to,notes

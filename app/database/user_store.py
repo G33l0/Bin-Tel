@@ -135,8 +135,7 @@ class UserDataStore:
     def install_id(self) -> str:
         """A random per-installation identifier.
 
-        Used to deduplicate telemetry and to derive the device identifier. It
-        is generated locally, contains nothing about the machine or the person
+        Generated locally, it contains nothing about the machine or the person
         using it, and can be reset by deleting the user database.
         """
         existing = self.get_metadata(UserMetadata.INSTALL_ID)

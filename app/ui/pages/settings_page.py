@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
 
 from app.core.config import (
     InstallPolicy,
-    LicenseServiceMode,
     LogLevel,
     LookupMode,
     SearchBehavior,
@@ -106,7 +105,6 @@ class SettingsPage(BasePage):
     database_path_changed = pyqtSignal()
     search_settings_changed = pyqtSignal()
     general_changed = pyqtSignal()
-    license_changed = pyqtSignal()
 
     def __init__(self, context, parent: QWidget | None = None) -> None:
         super().__init__(context, parent)
@@ -127,8 +125,7 @@ class SettingsPage(BasePage):
         self.tabs.addTab(self._build_search(), "Search")
         self.tabs.addTab(self._build_watchlists(), "Watchlists")
         self.tabs.addTab(self._build_reports(), "Reports")
-        self.tabs.addTab(self._build_license(), "Licence")
-        self.tabs.addTab(self._build_privacy(), "Privacy & Telemetry")
+        self.tabs.addTab(self._build_privacy(), "Privacy")
         self.tabs.addTab(self._build_advanced(), "Advanced")
 
         self.load()
@@ -416,103 +413,37 @@ class SettingsPage(BasePage):
         self.max_report_rows.valueChanged.connect(self._save_reports)  # type: ignore[attr-defined]
         return page
 
-    def _build_license(self) -> QWidget:
-        page, layout = self._page()
-        section = SettingsSection(
-            "Licensing service",
-            "Where Bin-Tel verifies your licence. Lookups never depend on this.",
-            page,
-        )
-        mode = QComboBox()
-        for option in LicenseServiceMode:
-            mode.addItem(option.label, option.value)
-        self.license_mode = section.add_setting(
-            "Service",
-            mode,
-            "The development service issues real signed licences locally, for "
-            "evaluating paid features without an account.",
-        )
-        self.license_url = QLineEdit()
-        self.license_url.setAccessibleName("Licensing API URL")
-        section.add_setting(
-            "Licensing API", self.license_url, "The endpoint activation and validation use."
-        )
-        self.revalidate_on_startup = section.add_setting(
-            "Verify the licence on startup",
-            QCheckBox(),
-            "Only when the offline grace window is more than half spent.",
-        )
-
-        open_license = QPushButton("Open the Plan & Licence page", section)
-        open_license.setProperty("variant", "primary")
-        open_license.clicked.connect(lambda: self.navigate("license"))
-        section.body.addWidget(open_license, 0, Qt.AlignmentFlag.AlignLeft)
-        layout.addWidget(section)
-        layout.addItem(expanding_spacer(horizontal=False))
-
-        self.license_mode.currentIndexChanged.connect(self._save_license)  # type: ignore[attr-defined]
-        self.license_url.editingFinished.connect(self._save_license)
-        self.revalidate_on_startup.toggled.connect(self._save_license)  # type: ignore[attr-defined]
-        return page
-
     def _build_privacy(self) -> QWidget:
         page, layout = self._page()
 
         section = SettingsSection(
-            "Privacy & telemetry",
-            "Telemetry is off unless you turn it on, and Bin-Tel works identically "
-            "either way.",
+            "Privacy",
+            "Bin-Tel is a local tool. Nothing it records about the way you use it "
+            "ever leaves this machine.",
             page,
-        )
-        self.telemetry_enabled = section.add_setting(
-            "Help improve Bin-Tel by sending anonymous usage statistics",
-            QCheckBox(),
-            "Aggregated product events only. Turning this off also deletes anything "
-            "already queued.",
         )
         self.remember_search_history = section.add_setting(
             "Remember recent searches",
             QCheckBox(),
             "Kept on this machine only, and never transmitted.",
         )
-        self.crash_reports = section.add_setting(
-            "Send error type information when something fails",
-            QCheckBox(),
-            "The type of the error, never its message or your data.",
-        )
         layout.addWidget(section)
 
-        detail = SettingsSection("What would be sent", parent=page)
-        self.telemetry_collect_label = QLabel("", detail)
-        self.telemetry_collect_label.setWordWrap(True)
-        detail.body.addWidget(self.telemetry_collect_label)
-        self.telemetry_exclude_label = QLabel("", detail)
-        self.telemetry_exclude_label.setWordWrap(True)
-        detail.body.addWidget(self.telemetry_exclude_label)
-        self.telemetry_queue_label = QLabel("", detail)
-        self.telemetry_queue_label.setProperty("role", "muted")
-        detail.body.addWidget(self.telemetry_queue_label)
-
-        queue_actions = hbox(spacing=8)
-        view_queue = QPushButton("View queued events", detail)
-        view_queue.setProperty("variant", "ghost")
-        view_queue.clicked.connect(self._show_telemetry_queue)
-        queue_actions.addWidget(view_queue)
-        clear_queue = QPushButton("Delete stored telemetry", detail)
-        clear_queue.setProperty("variant", "danger")
-        clear_queue.clicked.connect(self._clear_telemetry)
-        queue_actions.addWidget(clear_queue)
-        queue_actions.addItem(expanding_spacer())
-        detail.body.addLayout(queue_actions)
+        detail = SettingsSection("What leaves this machine", parent=page)
+        self.network_label = QLabel(
+            "Only two things reach the network, and only when you ask for them:\n"
+            "  •  downloading a database update from the source you configured\n"
+            "  •  importing from a remote data source you configured yourself\n"
+            "Lookups, searches, watchlists and reports are entirely local, and "
+            "Bin-Tel keeps working with no connection at all.",
+            detail,
+        )
+        self.network_label.setWordWrap(True)
+        detail.body.addWidget(self.network_label)
         layout.addWidget(detail)
         layout.addItem(expanding_spacer(horizontal=False))
 
-        for widget in (
-            self.telemetry_enabled,
-            self.remember_search_history,
-            self.crash_reports,
-        ):
-            widget.toggled.connect(self._save_privacy)  # type: ignore[attr-defined]
+        self.remember_search_history.toggled.connect(self._save_privacy)
         return page
 
     def _build_appearance(self) -> QWidget:
@@ -723,16 +654,8 @@ class SettingsPage(BasePage):
         self.max_report_rows.setValue(reports.max_report_rows)
         self.reports_path_label.setText(str(self.context.config.reports_path()))
 
-        license_settings = settings.license
-        self._select_data(self.license_mode, license_settings.service_mode.value)
-        self.license_url.setText(license_settings.api_url)
-        self.revalidate_on_startup.setChecked(license_settings.revalidate_on_startup)
-
         privacy = settings.privacy
-        self.telemetry_enabled.setChecked(privacy.telemetry_enabled)
         self.remember_search_history.setChecked(privacy.remember_search_history)
-        self.crash_reports.setChecked(privacy.crash_reports)
-        self._render_telemetry_detail()
 
         appearance = settings.appearance
         self._populate_themes()
@@ -852,81 +775,12 @@ class SettingsPage(BasePage):
         self._persist()
         self.context.apply_settings()
 
-    def _save_license(self) -> None:
-        if self._loading:
-            return
-        settings = self.context.config.settings.license
-        settings.service_mode = LicenseServiceMode(self.license_mode.currentData())
-        try:
-            settings.api_url = self.license_url.text().strip()
-        except Exception:  # noqa: BLE001 - validation error from Pydantic
-            self.banner.show_message(
-                "The licensing API URL must start with https:// or http://.",
-                StateKind.DANGER,
-            )
-            self.license_url.setText(settings.api_url)
-            return
-        settings.revalidate_on_startup = self.revalidate_on_startup.isChecked()
-        self.license_url.setText(settings.api_url)
-        self._persist("Licensing service updated.")
-        self.context.reconfigure_licensing()
-        self.license_changed.emit()
-
     def _save_privacy(self) -> None:
         if self._loading:
             return
         privacy = self.context.config.settings.privacy
-        was_enabled = privacy.telemetry_enabled
-        privacy.telemetry_enabled = self.telemetry_enabled.isChecked()
-        privacy.telemetry_prompted = True
         privacy.remember_search_history = self.remember_search_history.isChecked()
-        privacy.crash_reports = self.crash_reports.isChecked()
         self._persist()
-        self.context.telemetry.set_enabled(privacy.telemetry_enabled)
-        if was_enabled and not privacy.telemetry_enabled:
-            self.banner.show_message(
-                "Telemetry is off and anything queued has been deleted.",
-                StateKind.SUCCESS,
-            )
-        elif privacy.telemetry_enabled and not was_enabled:
-            self.banner.show_message(
-                "Thank you — Bin-Tel will send aggregated usage statistics only.",
-                StateKind.SUCCESS,
-            )
-        self._render_telemetry_detail()
-
-    def _render_telemetry_detail(self) -> None:
-        telemetry = self.context.telemetry
-        self.telemetry_collect_label.setText(
-            "Sent when enabled:\n"
-            + "\n".join(f"  •  {line}" for line in telemetry.describe_collection())
-        )
-        self.telemetry_exclude_label.setText(
-            "Never sent:\n"
-            + "\n".join(f"  •  {line}" for line in telemetry.describe_exclusions())
-        )
-        counters = telemetry.counters()
-        total = sum(counters.values())
-        self.telemetry_queue_label.setText(
-            f"{telemetry.queue_size()} event(s) queued on this machine · "
-            f"{total:,} local usage counter(s) recorded."
-        )
-
-    def _show_telemetry_queue(self) -> None:
-        """Show exactly what is queued — the claim has to be checkable."""
-        from app.ui.dialogs.telemetry_dialog import TelemetryQueueDialog
-
-        TelemetryQueueDialog.show_queue(self, self.context.telemetry)
-        self._render_telemetry_detail()
-
-    def _clear_telemetry(self) -> None:
-        removed = self.context.telemetry.clear_all()
-        self._render_telemetry_detail()
-        self.banner.show_message(
-            f"{removed} stored telemetry record(s) deleted." if removed
-            else "There was no stored telemetry to delete.",
-            StateKind.SUCCESS,
-        )
 
     def _choose_backup_directory(self) -> None:
         directory = QFileDialog.getExistingDirectory(
@@ -1154,5 +1008,4 @@ class SettingsPage(BasePage):
         self.path_label.setText(str(self.context.database.path))
         self.backup_path_label.setText(str(self.context.config.backups_path()))
         self.reports_path_label.setText(str(self.context.config.reports_path()))
-        self._render_telemetry_detail()
         self._update_storage_summary()

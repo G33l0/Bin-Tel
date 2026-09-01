@@ -4,9 +4,12 @@
 
 Bin-Tel resolves a Bank Identification Number to the institution that issued it,
 and tells you what that institution is: its legal name, country, network, card
-attributes and address. It runs entirely against a local, deduplicated SQLite
-database that you download once and update on your own schedule, so every
-lookup is instant and works offline.
+attributes and address. It runs entirely against a local SQLite database built
+from a BIN list you maintain yourself, so every lookup is instant and works
+offline.
+
+It is a personal research tool. There is no account, no licence, no telemetry
+and nothing phones home.
 
 ```
 python -m app.main
@@ -32,6 +35,7 @@ only. Log output is passed through a redaction filter before it is written.
 | | |
 |---|---|
 | **BIN lookup** | Range-aware and length-aware: an exact 8-digit assignment or an account range always outranks the 6-digit root it sits under. Reports every relationship, its standing and its confidence. |
+| **Who uses it, and who stopped** | Several banks on one BIN are all named, never one chosen over the others. A bank that stopped is reported with the date it stopped — and is never presented as the current issuer. |
 | **Bank lookup** | Search an institution by display name, legal name or alias — exact, prefix, contains or fuzzy — and browse its whole BIN portfolio. |
 | **Advanced search** | Nineteen criteria combined in one query, with saved searches and favourites. |
 | **Command palette** | `Ctrl+K` from anywhere: pages, commands, BINs and institutions in one list. |
@@ -40,6 +44,9 @@ only. Log output is passed through a redaction filter before it is written.
 | **Institution Intelligence** | A full profile and portfolio analysis for one issuer. |
 | **Report Centre** | CSV, JSON, TXT, PDF and XLSX, with reusable templates. |
 | **Database Administration** | A measured health score, integrity checks, reindex, vacuum, orphan removal, backup and restore. |
+| **Your own BIN list** | The database is built from one file you maintain, [`data/bin-list.csv`](docs/BIN_LIST.md). Add rows, rebuild, done. |
+| **Gaps filled from evidence** | A blank network comes from the BIN's published range; a bank's country and website reach all of its BINs. Never a guessed website, card type or issuer — those stay Unknown. |
+| **Reversible rebuilds** | The database a rebuild replaces is kept, so a bad list is one command away from undone. |
 | **Updates** | Verified, atomic database installs with automatic rollback. |
 | **Five themes** | Midnight, Professional Light, Slate, Ocean and Graphite — every surface, every page. |
 
@@ -68,13 +75,21 @@ pip install openpyxl       # XLSX reports
 
 ### First run
 
-Bin-Tel has no database when it first starts, so it offers to download one. The
-package is fetched, its SHA-256 checksum verified, opened and integrity-checked
-before it is installed. Nothing is written to the working database until the
-downloaded copy has passed every check.
+Bin-Tel has no database when it first starts. Build one from your BIN list:
 
-To try it without a distribution server, build a synthetic package and point
-Bin-Tel at it:
+1. put your BINs in `data/bin-list.csv` — at minimum a `bin,bank` header and one
+   row per BIN;
+2. run `python -m app.cli rebuild` (or, in the app, **Database → Rebuild from
+   BIN list**).
+
+That is the whole loop, and it is the same loop every time the list changes.
+The rebuild builds a complete new database in staging, verifies it, and only
+then swaps it in — so a rebuild that fails leaves what you had untouched, and
+one that succeeds keeps the database it replaced for `python -m app.cli
+rollback`. See [docs/BIN_LIST.md](docs/BIN_LIST.md) for the format and every
+rule the reader enforces.
+
+To try the interface with nothing of your own, build a synthetic package:
 
 ```bash
 python scripts/build_sample_database.py --output dist/database --bins 5000
@@ -99,7 +114,7 @@ folder — useful on a USB stick.
 
 **Two databases, deliberately.** The intelligence database is replaceable: an
 update swaps the whole file. Your own data — saved searches, favourites,
-watchlists, licence, history, templates — lives in a separate
+watchlists, history, templates — lives in a separate
 `bintel-user.sqlite` that updates never touch, and cross-references the
 intelligence database by value (BIN digits, institution UID) rather than by row
 id. See [docs/DATABASE.md](docs/DATABASE.md).
@@ -111,6 +126,10 @@ id. See [docs/DATABASE.md](docs/DATABASE.md).
 ```bash
 python -m app.cli --help
 
+python -m app.cli rebuild                                  # from data/bin-list.csv
+python -m app.cli rebuild --list my-bins.csv --allow-shrink
+python -m app.cli rollback                                 # undo the last rebuild
+python -m app.cli check-list --strict                      # read the list, change nothing
 python -m app.cli init-db --database db.sqlite --db-version 2026.01.1
 python -m app.cli import-data --source data/issuers.csv   # via staging
 python -m app.cli import-data --source data/issuers.csv --no-stage
@@ -134,7 +153,7 @@ python -m app.cli restore ./backups/bintel-2026.01.1.sqlite
 |---|---|
 | `Ctrl+K` / `Ctrl+P` | Command palette |
 | `Ctrl+1` … `Ctrl+7` | Jump to a page |
-| `Ctrl+D` | Database · `Ctrl+U` Updates · `Ctrl+L` Plan & Licence |
+| `Ctrl+D` | Database · `Ctrl+U` Updates |
 | `Ctrl+B` | Collapse the sidebar · `Ctrl+T` cycle theme |
 | `Ctrl+,` | Settings · `F5` refresh the current page |
 | `Esc` | Clear a search, or close the palette |
@@ -144,7 +163,7 @@ python -m app.cli restore ./backups/bintel-2026.01.1.sqlite
 ## Development
 
 ```bash
-pytest                      # 428 tests
+pytest                      # 430 tests
 pytest -m "not gui"         # skip the offscreen interface tests
 ruff check app tests
 mypy app
@@ -164,15 +183,12 @@ app/
   normalizers/   names, networks, card attributes, geography, confidence scoring
   services/      lookup, search, analytics, reports, watchlists, updates, health…
   providers/     manifests, downloads, compression, delta planning
-  licensing/     plans, entitlements, signing, activation, devices
-  telemetry/     the opt-in event vocabulary and its sanitiser
   workers/       QRunnable wrappers, so nothing blocking runs on the GUI thread
   ui/            themes, widgets, pages, dialogs, windows
 ```
 
 The rule that shapes all of it: **widgets ask services, services ask
-repositories, repositories own the SQL.** No page imports the ORM, and no page
-compares a plan name — it asks the entitlement service about a named feature.
+repositories, repositories own the SQL.** No page imports the ORM.
 
 ---
 
@@ -180,11 +196,10 @@ compares a plan name — it asks the entitlement service about a named feature.
 
 | | |
 |---|---|
+| [BIN_LIST.md](docs/BIN_LIST.md) | The list your database is built from, and the rebuild loop |
 | [LOOKUP.md](docs/LOOKUP.md) | The lookup engine: allocations, specificity, confidence, conflicts |
 | [DATABASE.md](docs/DATABASE.md) | Schema, the two-database split, indexes, integrity, health |
 | [UPDATES.md](docs/UPDATES.md) | Manifests, the install pipeline, rollback, deltas |
-| [LICENSING.md](docs/LICENSING.md) | Signed licences, activation, devices, offline grace |
-| [MONETIZATION.md](docs/MONETIZATION.md) | Plans, entitlements, and how a paid surface is built |
 | [WATCHLISTS.md](docs/WATCHLISTS.md) | Change detection and alerts |
 | [REPORTING.md](docs/REPORTING.md) | Report types, formats and templates |
 | [ANALYTICS.md](docs/ANALYTICS.md) | What each figure measures |

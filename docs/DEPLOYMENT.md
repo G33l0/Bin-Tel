@@ -150,15 +150,6 @@ against it.
 
 ---
 
-## Editions
-
-`--edition` marks which plan a package is for. The licence names the edition a
-user is entitled to, so one distribution server can serve community,
-professional, business and enterprise packages through the same pipeline and
-the same client code. See [MONETIZATION.md](MONETIZATION.md).
-
----
-
 ## Release checklist
 
 **Application**

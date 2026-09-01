@@ -6,7 +6,6 @@ from PyQt6.QtWidgets import QLabel, QTabWidget, QWidget
 
 from app.core.config import SearchBehavior
 from app.core.errors import ValidationError
-from app.licensing.plans import Feature, Limit
 from app.models.schemas import (
     AdvancedQuery,
     AdvancedSearchResult,
@@ -26,7 +25,6 @@ from app.ui.widgets.bin_result_card import BinResultCard
 from app.ui.widgets.cards import Card
 from app.ui.widgets.search_box import SearchBox
 from app.ui.widgets.states import EmptyState, ErrorState, LoadingState
-from app.ui.widgets.upgrade_prompt import FeatureGate
 from app.utils.qt_helpers import shortcut, vbox
 from app.workers.base import Worker, run_in_background
 from app.workers.search_worker import BinSearchWorker
@@ -126,13 +124,7 @@ class BinLookupPage(BasePage):
         self.advanced_panel.save_requested.connect(self._save_search)
         self.advanced_panel.export_requested.connect(self._export_advanced)
         self.advanced_panel.copied.connect(self.toast)
-        self.advanced_gate = FeatureGate(
-            self.advanced_panel, Feature.ADVANCED_SEARCH, advanced
-        )
-        self.advanced_gate.upgrade_requested.connect(
-            lambda feature: self.navigate(f"license:{feature}")
-        )
-        advanced_layout.addWidget(self.advanced_gate, 1)
+        advanced_layout.addWidget(self.advanced_panel, 1)
         self.tabs.addTab(advanced, "Advanced search")
 
         # Connected last: adding a tab emits currentChanged, and the handler
@@ -174,15 +166,7 @@ class BinLookupPage(BasePage):
             self.focus_search()
 
     def refresh(self) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.ADVANCED_SEARCH)
-        unlocked = self.advanced_gate.apply(entitlement)
-        self.tabs.setTabToolTip(
-            1,
-            "Combine any criteria in one query"
-            if unlocked
-            else f"Advanced search is included with "
-            f"{(entitlement.required_plan.label if entitlement.required_plan else 'Pro')}",
-        )
+        self.tabs.setTabToolTip(1, "Combine any criteria in one query")
         self.advanced_panel.set_page_size(
             self.context.config.settings.search.results_per_page
         )
@@ -289,9 +273,6 @@ class BinLookupPage(BasePage):
         self.search.set_history(
             self.context.workspace.recent_terms(SearchKind.BIN, settings.search.max_history)
         )
-        from app.telemetry.events import Counter
-
-        self.context.telemetry.increment(Counter.BIN_LOOKUP_COUNT)
         self._update_record_actions(record)
 
     def _on_failed(self, exc: BaseException) -> None:
@@ -344,10 +325,6 @@ class BinLookupPage(BasePage):
         )
 
     def _watch_record(self, record: BinRecord) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.WATCHLISTS)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
-            return
         AddToWatchlistDialog.add(
             self,
             self.context,
@@ -361,10 +338,6 @@ class BinLookupPage(BasePage):
         )
 
     def _toggle_favorite(self, record: BinRecord) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.FAVORITES)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
-            return
         added = self.context.workspace.toggle_favorite(
             FavoriteKind.BIN, record.bin, f"BIN {record.bin}", record.issuer_name
         )
@@ -396,15 +369,8 @@ class BinLookupPage(BasePage):
         self.status_message.emit(
             f"{result.page.total:,} match(es) in {result.elapsed_ms:.0f} ms"
         )
-        from app.telemetry.events import Counter
-
-        self.context.telemetry.increment(Counter.ADVANCED_SEARCH_COUNT)
 
     def _save_search(self, query: AdvancedQuery) -> None:
-        entitlement = self.context.entitlements.entitlement(Feature.SAVED_SEARCHES)
-        if not entitlement.granted:
-            self.navigate(f"license:{entitlement.feature.value}")
-            return
         dialog = CreateWatchlistDialog(self)
         dialog.setWindowTitle("Bin-Tel — Save search")
         dialog.name_field.setPlaceholderText("US credit BINs")
@@ -418,7 +384,6 @@ class BinLookupPage(BasePage):
                 kind=SearchKind.ADVANCED,
                 query=query.describe(),
                 criteria=query,
-                limit=self.context.entitlements.limit(Limit.SAVED_SEARCHES, 0),
             )
         except ValidationError as exc:
             self.toast(exc.message)
@@ -432,10 +397,6 @@ class BinLookupPage(BasePage):
             if not rows:
                 self.toast("There is nothing to export")
                 return
-            cap = self.context.search.export_cap()
-            if cap is not None and len(rows) > cap:
-                rows = rows[:cap]
-                self.toast(f"Your plan exports up to {cap:,} rows")
             chosen = ExportDialog.choose(
                 self,
                 "advanced-search",
@@ -450,13 +411,6 @@ class BinLookupPage(BasePage):
             except Exception as exc:  # noqa: BLE001 - shown in a dialog
                 self.show_error(exc)
                 return
-            from app.telemetry.events import Counter, Event, bucket
-
-            self.context.telemetry.increment(Counter.EXPORT_COUNT)
-            self.context.telemetry.record(
-                Event.EXPORT_COMPLETED,
-                {"format": fmt.value, "row_bucket": bucket(len(rows)), "surface": "advanced"},
-            )
             self.toast(f"Exported {len(rows):,} record(s)")
 
         if selected:
@@ -476,7 +430,6 @@ class BinLookupPage(BasePage):
         if record is not None:
             self.result_card.show_record(record)
             self._update_record_actions(record)
-        self.advanced_gate.refresh_theme()
         self.advanced_panel.refresh_theme()
 
     def set_search_behavior(self, behavior: SearchBehavior, delay_ms: int) -> None:
