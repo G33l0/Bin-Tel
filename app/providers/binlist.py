@@ -290,17 +290,21 @@ class BinlistProvider:
     ) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._budget = budget or RequestBudget()
-        # Injected in tests so the suite never touches the network.
+        # Injected in tests so the suite never touches the network. The
+        # headers are deliberately *not* set here: they belong to the request,
+        # so swapping the transport still exercises the real ones.
         self._client_factory = client_factory or (
-            lambda: httpx.Client(
-                timeout=REQUEST_TIMEOUT,
-                headers={
-                    "User-Agent": USER_AGENT,
-                    "Accept-Version": BINLIST_API_VERSION,
-                    "Accept": "application/json",
-                },
-            )
+            lambda: httpx.Client(timeout=REQUEST_TIMEOUT)
         )
+
+    @staticmethod
+    def request_headers() -> dict[str, str]:
+        """What every request carries. The API version is documented as a header."""
+        return {
+            "User-Agent": USER_AGENT,
+            "Accept-Version": BINLIST_API_VERSION,
+            "Accept": "application/json",
+        }
 
     @property
     def budget(self) -> RequestBudget:
@@ -329,7 +333,7 @@ class BinlistProvider:
         url = f"{self._endpoint}/{digits}"
         try:
             with self._client_factory() as client:
-                response = client.get(url)
+                response = client.get(url, headers=self.request_headers())
         except httpx.TransportError as exc:
             raise NetworkError(
                 "binlist.net could not be reached.",

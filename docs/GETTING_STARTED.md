@@ -237,7 +237,9 @@ python -m app.cli verify-db      # check the database is intact
 ## Good to know
 
 * **Nothing leaves your machine.** No account, no sign-in, no telemetry. Bin-Tel
-  works with the network cable unplugged.
+  works with the network cable unplugged. (One optional exception you switch on
+  yourself: a binlist.net check for a single BIN — see
+  [SECOND_OPINION.md](SECOND_OPINION.md).)
 * **Your list is the truth.** The database is built from it and nothing else,
   so it can never drift away from what you wrote.
 * **It says "Unknown" rather than guessing.** A BIN not in your list comes back
