@@ -1,8 +1,15 @@
 """Shared PyInstaller packaging logic for Bin-Tel.
 
-The production database is deliberately **not** bundled: the installer stays
-small and the application downloads the current database on first run. Only
-branding, icons and theme tokens are shipped as data files.
+No database is bundled, and none is downloaded: Bin-Tel builds its database
+from the BIN list the user maintains, so the installer ships branding, icons,
+theme tokens and an empty BIN list *template*.
+
+The template matters. A packaged application unpacks its data files to a
+temporary directory that is deleted on exit, so the shipped copy can never be
+the file the user edits. On first run the application seeds a writable copy in
+the user's data directory from this template — see
+:func:`app.services.bin_list.seed_bin_list`. Without the template the seed
+still works, but the user loses the comment block explaining the format.
 """
 
 from __future__ import annotations
@@ -17,7 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from app.core.constants import APP_NAME, APP_VERSION
+from app.core.constants import APP_NAME, APP_VERSION  # noqa: E402 - after sys.path
 
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
@@ -29,6 +36,8 @@ DATA_FILES: tuple[tuple[str, str], ...] = (
     ("assets/branding", "assets/branding"),
     ("assets/icons", "assets/icons"),
     ("assets/themes", "assets/themes"),
+    # The BIN list template the first run seeds a writable copy from.
+    ("data/bin-list.csv", "data"),
 )
 
 #: Modules PyInstaller's static analysis cannot see (loaded via SQLAlchemy's

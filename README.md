@@ -165,14 +165,20 @@ python -m app.cli restore ./backups/bintel-2026.01.1.sqlite
 ## Development
 
 ```bash
-pytest                      # 430 tests
+pytest                      # 581 tests
 pytest -m "not gui"         # skip the offscreen interface tests
 ruff check app tests
 mypy app
 ```
 
-Packaging scripts for each platform live in `scripts/`
-(`build_linux.py`, `build_macos.py`, `build_windows.py`).
+Packaging scripts live in `scripts/`. One command builds an installer for
+whichever platform you are on:
+
+```bash
+python scripts/build_installer.py
+```
+
+See [docs/PACKAGING.md](docs/PACKAGING.md).
 
 ### Architecture
 
@@ -198,6 +204,7 @@ repositories, repositories own the SQL.** No page imports the ORM.
 
 | | |
 |---|---|
+| [PACKAGING.md](docs/PACKAGING.md) | Building an installer for Windows, macOS or Linux |
 | [GETTING_STARTED.md](docs/GETTING_STARTED.md) | Nothing to a working app, one step at a time |
 | [SECOND_OPINION.md](docs/SECOND_OPINION.md) | The optional binlist.net check: what it is for, and what it is not |
 | [BIN_LIST.md](docs/BIN_LIST.md) | The list your database is built from, and the rebuild loop |
