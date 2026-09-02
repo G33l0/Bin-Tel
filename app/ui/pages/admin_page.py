@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from app.database.backup import BackupInfo
 from app.database.integrity import VerificationReport
 from app.services.health_service import HealthReport
 from app.services.report_service import ReportFormat
@@ -602,7 +601,7 @@ class DatabaseAdminPage(BasePage):
     def _on_restored(self) -> None:
         try:
             self.context.database.open()
-        except Exception as exc:  # noqa: BLE001 - reported to the user
+        except Exception as exc:
             self._on_failed(exc)
             return
         self._end()
@@ -613,7 +612,7 @@ class DatabaseAdminPage(BasePage):
         try:
             if self.context.database.is_installed:
                 self.context.database.open()
-        except Exception:  # noqa: BLE001 - the original error matters more
+        except Exception:
             pass
         self._on_failed(exc)
 
@@ -696,7 +695,7 @@ class DatabaseAdminPage(BasePage):
         path, fmt = chosen
         try:
             result = self.context.reports.generate(content, ReportFormat(fmt.value), path)
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.toast(f"Health report written to {result.path.name}")

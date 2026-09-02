@@ -106,9 +106,10 @@ def test_a_preview_summarises_without_writing_a_file(reports, content):
 
 
 def test_a_bin_report_contains_only_issuer_metadata(reports, manager):
+    from sqlalchemy import text
+
     from app.repositories.bin_repository import BinRepository
     from app.services.lookup_service import LookupService
-    from sqlalchemy import text
 
     with manager.session() as session:
         digits = str(session.execute(text("SELECT bin FROM bins LIMIT 1")).scalar())

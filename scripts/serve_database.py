@@ -63,7 +63,7 @@ class DatabaseRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         return handle
 
-    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib signature
+    def log_message(self, format: str, *args: object) -> None:
         sys.stderr.write(f"  {self.address_string()} — {format % args}\n")
 
 

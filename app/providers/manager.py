@@ -72,7 +72,7 @@ class ProviderManager:
             except OfflineError as exc:
                 errors.append(f"{provider.label}: {exc.message}")
                 continue
-            except Exception as exc:  # noqa: BLE001 - try the next provider
+            except Exception as exc:
                 offline_only = False
                 errors.append(f"{provider.label}: {exc}")
                 logger.warning("Provider %s failed: %s", provider.name, exc)

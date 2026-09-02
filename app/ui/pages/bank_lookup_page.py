@@ -326,7 +326,7 @@ class BankLookupPage(BasePage):
             self.context.exports.export_rows(
                 rows, path, export_format, title=f"{name} — BIN records"  # type: ignore[arg-type]
             )
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.toast(f"Exported {len(rows):,} record(s) to {path.name}")

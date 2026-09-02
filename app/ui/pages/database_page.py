@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QLabel, QProgressBar, QPushButton, QWidget
+from PyQt6.QtWidgets import QFileDialog, QLabel, QProgressBar, QPushButton, QWidget
 
 from app.core.constants import UNKNOWN_DISPLAY
 from app.database.integrity import VerificationReport
@@ -21,8 +21,8 @@ from app.utils.formatting import (
     format_number,
     format_relative,
 )
-from app.utils.qt_helpers import hbox, reveal_in_file_manager, vbox
-from app.workers.base import Worker, run_in_background
+from app.utils.qt_helpers import hbox, reveal_in_file_manager
+from app.workers.base import run_in_background
 from app.workers.maintenance_worker import (
     BackupWorker,
     RebuildWorker,
@@ -138,6 +138,7 @@ class DatabasePage(BasePage):
             ("rebuild", "Rebuild from BIN list", True),
             ("check_list", "Check the list", False),
             ("open_list", "Open the list", False),
+            ("choose_list", "Choose a CSV file…", False),
             ("rollback", "Roll back", False),
         ):
             button = QPushButton(label, source)
@@ -153,6 +154,7 @@ class DatabasePage(BasePage):
         self.buttons["rebuild"].clicked.connect(self.rebuild_from_list)
         self.buttons["check_list"].clicked.connect(self.check_list)
         self.buttons["open_list"].clicked.connect(self.open_list_location)
+        self.buttons["choose_list"].clicked.connect(self.choose_list)
         self.buttons["rollback"].clicked.connect(self.roll_back)
 
         self.buttons["check"].clicked.connect(lambda: self.navigate("updates"))
@@ -258,7 +260,7 @@ class DatabasePage(BasePage):
         self.buttons["restore"].setEnabled(enabled and bool(self.context.backups.list()))
         # A rebuild does not need a database to already exist — it is how the
         # first one gets built — so it is gated on the list, not on `installed`.
-        for key in ("rebuild", "check_list", "open_list"):
+        for key in ("rebuild", "check_list", "open_list", "choose_list"):
             self.buttons[key].setEnabled(enabled)
         self.buttons["rollback"].setEnabled(
             enabled and self.context.rebuilds.can_roll_back
@@ -311,9 +313,8 @@ class DatabasePage(BasePage):
     # -- the BIN list ------------------------------------------------------
     @property
     def list_path(self) -> Path:
-        from app.services.bin_list import default_bin_list_path
-
-        return default_bin_list_path()
+        """Whatever list the user chose, or the default working copy."""
+        return self.context.config.bin_list_path()
 
     def refresh_list_status(self) -> None:
         """Describe the list without building anything from it."""
@@ -338,6 +339,21 @@ class DatabasePage(BasePage):
 
     def open_list_location(self) -> None:
         reveal_in_file_manager(self.list_path)
+
+    def choose_list(self) -> None:
+        """Point Bin-Tel at a BIN list anywhere on this machine."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose your BIN list",
+            str(self.list_path.parent),
+            "BIN list (*.csv *.tsv *.txt);;All files (*)",
+        )
+        if not path:
+            return
+        self.context.config.set_bin_list_path(Path(path))
+        self.context.config.save_settings()
+        self.refresh_list_status()
+        self.toast(f"Now building from {Path(path).name}")
 
     def rebuild_from_list(self, *, allow_shrink: bool = False) -> None:
         self._begin("Rebuilding from the BIN list…")
@@ -470,7 +486,7 @@ class DatabasePage(BasePage):
     def _on_restored(self) -> None:
         try:
             self.context.database.open()
-        except Exception as exc:  # noqa: BLE001 - reported to the user
+        except Exception as exc:
             self._on_failed(exc)
             return
         self._end()
@@ -482,7 +498,7 @@ class DatabasePage(BasePage):
         try:
             if self.context.database.is_installed:
                 self.context.database.open()
-        except Exception:  # noqa: BLE001 - the original error matters more
+        except Exception:
             pass
         self._on_failed(exc)
 

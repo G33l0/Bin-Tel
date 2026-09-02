@@ -135,7 +135,7 @@ class SearchBox(QWidget):
     def _position_icon(self) -> None:
         self.icon_label.move(13, max(0, (self.field.height() - 18) // 2))
 
-    def resizeEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+    def resizeEvent(self, event: object) -> None:
         super().resizeEvent(event)  # type: ignore[arg-type]
         self._position_icon()
 
@@ -212,7 +212,7 @@ class _SearchLineEdit(QLineEdit):
 
     escape_pressed = pyqtSignal()
 
-    def keyPressEvent(self, event: QKeyEvent | None) -> None:  # noqa: N802 - Qt API
+    def keyPressEvent(self, event: QKeyEvent | None) -> None:
         if event is not None and event.key() == Qt.Key.Key_Escape:
             self.escape_pressed.emit()
             event.accept()

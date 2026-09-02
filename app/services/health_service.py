@@ -210,7 +210,7 @@ class DatabaseHealthService:
                 report.missing_fields = missing
                 report.checks.append(completeness)
 
-        except Exception as exc:  # noqa: BLE001 - reported, never raised to the UI
+        except Exception as exc:
             logger.exception("Database health evaluation failed")
             report.error = "The database could not be assessed."
             report.checks.clear()

@@ -117,7 +117,7 @@ def test_filters_combine_conjunctively(repository, manager):
         AdvancedQuery(country_code=country, network_code=network), PageRequest()
     )
     assert page.total == expected
-    assert 0 < expected
+    assert expected > 0
 
 
 def test_pagination_walks_the_whole_result_set_without_repeats(repository):

@@ -24,17 +24,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.constants import SCHEMA_VERSION  # noqa: E402
-from app.database.engine import DatabaseManager  # noqa: E402
-from app.database.schema import analyze, create_schema, write_metadata  # noqa: E402
-from app.models.entities import (  # noqa: E402
+from app.core.constants import SCHEMA_VERSION
+from app.database.engine import DatabaseManager
+from app.database.schema import analyze, create_schema, write_metadata
+from app.models.entities import (
     DatabaseMetadata,
     DatabaseVersion,
     RangeType,
 )
-from app.services.ingest_service import IngestService, RawBinRecord  # noqa: E402
-from app.providers.compression import compress, normalise, suffix_for  # noqa: E402
-from app.utils.hashing import file_checksum  # noqa: E402
+from app.providers.compression import compress, normalise, suffix_for
+from app.services.ingest_service import IngestService, RawBinRecord
+from app.utils.hashing import file_checksum
 
 # --- synthetic issuer catalogue -------------------------------------------
 # Invented institutions; any resemblance to a real bank's name is incidental.

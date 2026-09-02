@@ -95,9 +95,9 @@ def test_export_writes_a_bin_record(capsys, tmp_path, database_path, manager):
 
 def test_init_db_creates_an_empty_but_structurally_sound_database(capsys, tmp_path):
     from app.core.constants import SCHEMA_VERSION
+    from app.database.engine import DatabaseManager
     from app.database.integrity import verify_database
     from app.database.schema import missing_tables
-    from app.database.engine import DatabaseManager
 
     target = tmp_path / "fresh.sqlite"
     code, _ = run(capsys, "init-db", "--database", str(target), "--db-version", "2026.01.1")

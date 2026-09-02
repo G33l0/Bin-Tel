@@ -21,6 +21,8 @@ from typing import Any
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
+from app.lookup.resolution import Candidate
+from app.lookup.strategy import LookupStrategy
 from app.models.entities import (
     Address,
     Bin,
@@ -45,8 +47,6 @@ from app.models.schemas import (
     PageRequest,
     SortDirection,
 )
-from app.lookup.resolution import Candidate
-from app.lookup.strategy import LookupStrategy
 from app.normalizers.bin_normalizer import bin_normalizer
 from app.repositories.base import BaseRepository
 

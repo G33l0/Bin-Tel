@@ -20,6 +20,7 @@ from app.core.constants import APP_NAME, APP_VERSION
 from app.core.errors import ExportError
 from app.core.logging_config import get_logger
 from app.models.schemas import BinRecord, BinRow
+from app.utils.csv_safety import escape_row, escape_rows
 
 logger = get_logger(__name__)
 
@@ -123,7 +124,7 @@ class ExportService:
             buffer = io.StringIO()
             writer = csv.writer(buffer, lineterminator="\n")
             writer.writerow(["Field", "Value"])
-            writer.writerows(pairs)
+            writer.writerows(escape_rows(pairs))
             return buffer.getvalue()
 
         width = max(len(label) for label, _ in pairs) + 2
@@ -161,7 +162,9 @@ class ExportService:
             buffer = io.StringIO()
             writer = csv.writer(buffer, lineterminator="\n")
             writer.writerow([label for _, label in ROW_COLUMNS])
-            writer.writerows([[row.cell(key) for key, _ in ROW_COLUMNS] for row in rows])
+            writer.writerows(
+                escape_rows([row.cell(key) for key, _ in ROW_COLUMNS] for row in rows)
+            )
             return buffer.getvalue()
 
         lines = [f"{APP_NAME} — {title or 'BIN records'}", f"{len(rows):,} record(s)", ""]

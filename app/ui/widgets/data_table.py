@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
 
 from app.models.schemas import BinFilters, BinRow, Page, PageRequest
 from app.ui.models.bin_table_model import DEFAULT_HIDDEN, BinTableModel
-from app.ui.themes.icons import IconProvider
 from app.ui.widgets.cards import IconButton
 from app.ui.widgets.states import EmptyState
 from app.utils.qt_helpers import copy_to_clipboard, expanding_spacer, grid, hbox, vbox
@@ -123,17 +122,17 @@ class FilterBar(QWidget):
         self._ordered.append(self.clear_button)
         self._relayout(columns=len(self._ordered))
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
+    def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._relayout()
 
-    def sizeHint(self):  # noqa: N802
+    def sizeHint(self):
         hint = super().sizeHint()
         # The natural width is one full row, but the bar is happy to be
         # narrower, so it must not report the row width as a *minimum*.
         return hint
 
-    def minimumSizeHint(self):  # noqa: N802
+    def minimumSizeHint(self):
         hint = super().minimumSizeHint()
         hint.setWidth(self._COMBO_WIDTH * 2 + self._SPACING)
         return hint

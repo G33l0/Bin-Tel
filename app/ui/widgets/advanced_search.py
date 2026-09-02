@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from PyQt6.QtCore import QDate, Qt, pyqtSignal
+from PyQt6.QtCore import QDate, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,

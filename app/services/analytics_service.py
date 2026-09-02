@@ -487,7 +487,7 @@ class AnalyticsService:
                 .order_by(DatabaseVersion.release_date.desc())
                 .limit(limit)
             ).all()
-        except Exception:  # noqa: BLE001 - older packages have no lineage table
+        except Exception:
             return []
         return [(str(version), date, int(count or 0)) for version, date, count in rows]
 
@@ -503,7 +503,7 @@ class AnalyticsService:
                     .where(DatabaseStatistic.scope == scope)
                     .order_by(DatabaseStatistic.value.desc())
                 ).all()
-        except Exception:  # noqa: BLE001 - table absent in an older package
+        except Exception:
             return []
         return [
             Slice(key=str(key), label=str(label or key), value=int(value or 0))

@@ -153,7 +153,7 @@ class MetricCard(Card):
         self.detail_label.setVisible(bool(detail))
         self.setAccessibleName(f"{self.label_widget.text()}: {self.value_label.text()}")
 
-    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:  # noqa: N802 - Qt API
+    def mouseReleaseEvent(self, event: QMouseEvent | None) -> None:
         if self._clickable and event is not None and event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()
         super().mouseReleaseEvent(event)
@@ -278,7 +278,7 @@ class CardGrid(QWidget):
         self._cards.clear()
         self._columns = 0
 
-    def resizeEvent(self, event: object) -> None:  # noqa: N802 - Qt API
+    def resizeEvent(self, event: object) -> None:
         super().resizeEvent(event)  # type: ignore[arg-type]
         self._relayout()
 

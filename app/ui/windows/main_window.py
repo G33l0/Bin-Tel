@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QByteArray, Qt, QTimer
+from PyQt6.QtCore import QByteArray, QTimer
 from PyQt6.QtGui import QCloseEvent, QKeySequence
 from PyQt6.QtWidgets import (
     QLabel,
@@ -38,9 +38,9 @@ from app.ui.widgets.command_palette import Command, CommandPalette, PaletteResul
 from app.ui.widgets.header import AppHeader
 from app.ui.widgets.sidebar import NAV_ITEMS, Sidebar
 from app.ui.widgets.toast import Toast
-from app.workers.base import Worker, run_in_background
 from app.utils.qt_helpers import hbox, shortcut, vbox
 from app.utils.validators import looks_like_bin
+from app.workers.base import Worker, run_in_background
 
 logger = get_logger(__name__)
 
@@ -463,7 +463,7 @@ class MainWindow(QMainWindow):
         """Show unread watchlist alerts on the navigation entry."""
         try:
             unread = self.context.watchlists.unread_count()
-        except Exception:  # noqa: BLE001 - a badge must never break the window
+        except Exception:
             unread = 0
         self.sidebar.set_badge_count("watchlists", unread)
 
@@ -538,7 +538,7 @@ class MainWindow(QMainWindow):
         self.context.config.save_state()
 
     # -- lifecycle -----------------------------------------------------------
-    def closeEvent(self, event: QCloseEvent | None) -> None:  # noqa: N802 - Qt API
+    def closeEvent(self, event: QCloseEvent | None) -> None:
         if event is None:  # pragma: no cover - defensive
             return
         general = self.context.config.settings.general

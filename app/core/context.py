@@ -182,7 +182,7 @@ class AppContext:
             return None
         try:
             return self.metadata.version()
-        except Exception:  # noqa: BLE001 - a metadata read must not break startup
+        except Exception:
             return None
 
     def _on_database_installed(self, outcome: UpdateOutcome) -> None:
@@ -194,7 +194,7 @@ class AppContext:
             self.watchlists.scan_for_changes(
                 from_version=outcome.previous_version, to_version=outcome.version
             )
-        except Exception:  # noqa: BLE001 - never fail an update over a scan
+        except Exception:
             logger.exception("Change detection after the update did not complete")
 
     def apply_database_path(self, path: Path) -> None:
@@ -230,13 +230,13 @@ class AppContext:
             self.workspace.prune(
                 keep_events_days=self.config.settings.watchlists.keep_events_days
             )
-        except Exception:  # noqa: BLE001 - housekeeping must not break startup
+        except Exception:
             logger.debug("Workspace housekeeping did not complete", exc_info=True)
 
     def shutdown(self, *, session_seconds: float | None = None) -> None:
         try:
             self.config.save()
-        except Exception:  # noqa: BLE001 - shutdown must not raise
+        except Exception:
             logger.exception("Could not persist configuration on shutdown")
         self.database.close()
         self.user_store.close()

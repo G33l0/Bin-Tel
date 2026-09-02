@@ -143,6 +143,10 @@ class GeneralSettings(_Section):
 class DatabaseSettings(_Section):
     #: Empty means "use the platform default location".
     database_directory: str = ""
+    #: Where the personal BIN list lives. Empty means the copy in the
+    #: application's own data folder, which is writable on every platform —
+    #: unlike anything beside a packaged executable.
+    bin_list_path: str = ""
     manifest_url: str = DEFAULT_MANIFEST_URL
     automatic_updates: bool = True
     update_frequency: UpdateFrequency = UpdateFrequency.WEEKLY
@@ -438,6 +442,28 @@ class ConfigManager:
             directory.mkdir(parents=True, exist_ok=True)
             return directory
         return self._paths.backups_dir
+
+    def bin_list_path(self) -> Path:
+        """The BIN list the database is built from.
+
+        A packaged application unpacks its resources to a temporary folder that
+        is deleted on exit, so the bundled template can never be the file the
+        user edits. The working copy therefore lives in the data directory, and
+        is seeded from the template the first time it is needed.
+        """
+        configured = self.settings.database.bin_list_path.strip()
+        if configured:
+            return Path(configured).expanduser()
+
+        from app.services.bin_list import BIN_LIST_FILENAME, seed_bin_list
+
+        working = self._paths.data_dir / BIN_LIST_FILENAME
+        seed_bin_list(working)
+        return working
+
+    def set_bin_list_path(self, path: Path | None) -> None:
+        """Point at a different list, or back at the default."""
+        self.settings.database.bin_list_path = "" if path is None else str(path)
 
     def reports_path(self) -> Path:
         configured = self.settings.reports.output_directory.strip()

@@ -34,7 +34,7 @@ class BinTelSplash(QSplashScreen):
         if application is not None:
             application.processEvents()
 
-    def drawContents(self, painter: QPainter | None) -> None:  # noqa: N802 - Qt API
+    def drawContents(self, painter: QPainter | None) -> None:
         if painter is None:  # pragma: no cover - defensive
             return
         super().drawContents(painter)

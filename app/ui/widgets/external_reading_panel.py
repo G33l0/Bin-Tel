@@ -16,7 +16,6 @@ from __future__ import annotations
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QPushButton, QWidget
 
-from app.core.constants import UNKNOWN_DISPLAY
 from app.providers.binlist import ExternalReading
 from app.ui.themes.icons import IconProvider
 from app.ui.widgets.cards import Card, SectionHeader

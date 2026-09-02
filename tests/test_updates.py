@@ -6,12 +6,10 @@ import json
 import shutil
 
 import pytest
-
-from app.core.errors import BinTelError, ChecksumMismatchError
 from pydantic import ValidationError as PydanticValidationError
 
+from app.core.errors import BinTelError, ChecksumMismatchError
 from app.providers.manifest import DatabaseManifest, compare_versions
-
 
 # -- manifest parsing ---------------------------------------------------------
 

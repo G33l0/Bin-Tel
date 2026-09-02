@@ -75,7 +75,7 @@ class DatabaseService:
         if self._manager.is_open:
             try:
                 optimize(self._manager.engine)
-            except Exception:  # noqa: BLE001 - shutdown must not fail
+            except Exception:
                 logger.debug("PRAGMA optimize on shutdown failed", exc_info=True)
         self._manager.close()
 
@@ -93,7 +93,7 @@ class DatabaseService:
                         session,
                         {DatabaseMetadata.LAST_VERIFIED: datetime.now(UTC).isoformat()},
                     )
-            except Exception:  # noqa: BLE001 - a read-only DB must still verify
+            except Exception:
                 logger.debug("Could not record the verification timestamp", exc_info=True)
         logger.info(
             "Database verification finished",

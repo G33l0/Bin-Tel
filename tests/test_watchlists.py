@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-from sqlalchemy import text
 
 from app.core.errors import ValidationError
 from app.models.user_entities import WatchTargetType

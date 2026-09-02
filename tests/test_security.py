@@ -15,7 +15,6 @@ from app.core.errors import ValidationError
 from app.core.logging_config import RedactionFilter, redact
 from app.utils.validators import validate_bin
 
-
 # -- input refusal ------------------------------------------------------------
 
 

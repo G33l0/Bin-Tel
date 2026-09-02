@@ -92,7 +92,7 @@ class BatchImporter(BaseImporter):
             try:
                 importer = importer_for(options)
                 batch.files.append((path, importer.run(manager, cancelled=cancelled)))
-            except Exception as exc:  # noqa: BLE001 - continue with the next file
+            except Exception as exc:
                 logger.warning("Batch import skipped %s: %s", path.name, exc)
                 batch.failures.append((path, str(exc)))
         logger.info("Batch import finished", extra={"context": {"summary": batch.summary}})

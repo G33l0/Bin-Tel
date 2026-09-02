@@ -863,7 +863,7 @@ class SettingsPage(BasePage):
         database = self.context.config.settings.database
         try:
             database.manifest_url = value
-        except Exception:  # noqa: BLE001 - validation error from Pydantic
+        except Exception:
             self.banner.show_message(
                 "That database source is not a valid https, http or file URL.",
                 StateKind.DANGER,
@@ -943,7 +943,7 @@ class SettingsPage(BasePage):
             return
         try:
             new_path = self.context.database.move_to(target)
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.context.config.settings.database.database_directory = str(new_path.parent)
@@ -958,7 +958,7 @@ class SettingsPage(BasePage):
             return
         try:
             new_path = self.context.database.move_to(default.parent)
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.context.config.settings.database.database_directory = ""

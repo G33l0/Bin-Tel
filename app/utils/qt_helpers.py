@@ -16,9 +16,9 @@ from PyQt6.QtCore import QObject, Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QFrame,
-    QLabel,
     QGridLayout,
     QHBoxLayout,
+    QLabel,
     QLayout,
     QSizePolicy,
     QSpacerItem,

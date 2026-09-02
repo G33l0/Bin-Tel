@@ -60,12 +60,12 @@ class BinTableModel(QAbstractTableModel):
         self._columns: tuple[Column, ...] = COLUMNS
 
     # -- Qt model interface ----------------------------------------------
-    def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802 - Qt API
+    def rowCount(self, parent: QModelIndex | None = None) -> int:
         if parent is not None and parent.isValid():
             return 0
         return len(self._rows)
 
-    def columnCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802 - Qt API
+    def columnCount(self, parent: QModelIndex | None = None) -> int:
         if parent is not None and parent.isValid():
             return 0
         return len(self._columns)
@@ -88,7 +88,7 @@ class BinTableModel(QAbstractTableModel):
             return row
         return None
 
-    def headerData(  # noqa: N802 - Qt API
+    def headerData(
         self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole
     ) -> Any:
         if orientation is Qt.Orientation.Horizontal and 0 <= section < len(self._columns):

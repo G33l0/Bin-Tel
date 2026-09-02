@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QComboBox, QLabel, QPushButton, QStackedWidget, QWidget
+from PyQt6.QtWidgets import QComboBox, QLabel, QPushButton, QWidget
 
 from app.models.schemas import AdvancedQuery
 from app.services.analytics_service import AnalyticsSnapshot
@@ -329,7 +328,7 @@ class AnalyticsPage(BasePage):
         try:
             report_format = ReportFormat(fmt.value)
             result = self.context.reports.generate(content, report_format, path)
-        except Exception as exc:  # noqa: BLE001 - shown in a dialog
+        except Exception as exc:
             self.show_error(exc)
             return
         self.context.workspace.record_report(

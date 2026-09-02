@@ -22,19 +22,19 @@ from PyQt6.QtWidgets import QLayout, QStackedLayout, QWidget
 class _AdaptiveStackedLayout(QStackedLayout):
     """Stacked layout that measures only the page on show."""
 
-    def sizeHint(self) -> QSize:  # noqa: N802
+    def sizeHint(self) -> QSize:
         widget = self.currentWidget()
         return widget.sizeHint() if widget is not None else super().sizeHint()
 
-    def minimumSize(self) -> QSize:  # noqa: N802
+    def minimumSize(self) -> QSize:
         widget = self.currentWidget()
         return widget.minimumSizeHint() if widget is not None else super().minimumSize()
 
-    def hasHeightForWidth(self) -> bool:  # noqa: N802
+    def hasHeightForWidth(self) -> bool:
         widget = self.currentWidget()
         return widget.hasHeightForWidth() if widget is not None else False
 
-    def heightForWidth(self, width: int) -> int:  # noqa: N802
+    def heightForWidth(self, width: int) -> int:
         widget = self.currentWidget()
         if widget is None:
             return super().heightForWidth(width)
@@ -56,7 +56,7 @@ class AdaptiveStack(QWidget):
         self._layout.currentChanged.connect(self._on_current_changed)
 
     # -- stacked-widget API ------------------------------------------------
-    def addWidget(self, widget: QWidget) -> int:  # noqa: N802
+    def addWidget(self, widget: QWidget) -> int:
         index = self._layout.addWidget(widget)
         self.updateGeometry()
         return index
@@ -67,16 +67,16 @@ class AdaptiveStack(QWidget):
     def widget(self, index: int) -> QWidget | None:
         return self._layout.widget(index)
 
-    def currentWidget(self) -> QWidget | None:  # noqa: N802
+    def currentWidget(self) -> QWidget | None:
         return self._layout.currentWidget()
 
-    def currentIndex(self) -> int:  # noqa: N802
+    def currentIndex(self) -> int:
         return self._layout.currentIndex()
 
-    def setCurrentWidget(self, widget: QWidget) -> None:  # noqa: N802
+    def setCurrentWidget(self, widget: QWidget) -> None:
         self._layout.setCurrentWidget(widget)
 
-    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+    def setCurrentIndex(self, index: int) -> None:
         self._layout.setCurrentIndex(index)
 
     def show_widget(self, widget: QWidget) -> None:

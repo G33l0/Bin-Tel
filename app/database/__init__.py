@@ -11,8 +11,8 @@ from app.database.schema import (
     REQUIRED_TABLES,
     analyze,
     create_schema,
-    rebuild_indexes,
     read_metadata,
+    rebuild_indexes,
     write_metadata,
 )
 

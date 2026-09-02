@@ -368,7 +368,7 @@ class RebuildService:
             with self._manager.session() as session:
                 row = session.get(DatabaseMetadata, DatabaseMetadata.VERSION)
                 return row.value if row else None
-        except Exception:  # noqa: BLE001 - a metadata read must not stop a rebuild
+        except Exception:
             return None
 
     def _current_record_count(self) -> int:
@@ -382,7 +382,7 @@ class RebuildService:
 
             with self._manager.session() as session:
                 return int(session.execute(select(func.count(Bin.id))).scalar_one())
-        except Exception:  # noqa: BLE001 - an unreadable database blocks nothing
+        except Exception:
             return 0
 
     @staticmethod
@@ -392,8 +392,8 @@ class RebuildService:
 
 
 __all__ = [
+    "ImportError_",
     "RebuildOutcome",
     "RebuildService",
     "ShrinkRefused",
-    "ImportError_",
 ]

@@ -444,11 +444,11 @@ def _friendly(seconds: float) -> str:
 
 __all__ = [
     "BINLIST_ENDPOINT",
+    "PROVIDER_LICENSE",
     "REQUESTS_PER_HOUR",
     "BinlistProvider",
     "ExternalReading",
     "LicenseStatus",
-    "PROVIDER_LICENSE",
     "RateLimited",
     "RequestBudget",
     "parse_reading",
