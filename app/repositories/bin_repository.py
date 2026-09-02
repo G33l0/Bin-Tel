@@ -676,15 +676,23 @@ class BinRepository(BaseRepository):
             for link in links
             if link.institution is not None
         )
-        # The address shown belongs to whichever institution the record is
-        # actually attributed to, which is not necessarily the first link.
+        # The address and country shown belong to whichever institution the
+        # record is *currently* attributed to. A link that has ended supplies
+        # neither, even when it is the only link there is: labelling a BIN
+        # with the country of the bank that stopped issuing it in 2024 states
+        # something false about the BIN today, however well evidenced that row
+        # was. Where no current link exists the answer is Unknown, which is
+        # the truth.
         primary_link = next(
             (
                 link
                 for link in links
                 if link.institution is not None and link.is_current and link.is_primary
             ),
-            links[0] if links else None,
+            None,
+        ) or next(
+            (link for link in links if link.institution is not None and link.is_current),
+            None,
         )
         primary = primary_link.institution if primary_link else None
         address = cls._pick_address(primary)

@@ -546,6 +546,23 @@ def _resplit(cells: list[str]) -> list[str]:
     return cells
 
 
+def _original_row(cells: list[str], headers: list[str]) -> dict[str, str]:
+    """The row under the source's own column names, in the file's own order.
+
+    Every filled cell survives, including ones no canonical column claims. A
+    cell with no header above it is kept under its position, because a value
+    with a lost label is still better evidence than no value at all.
+    """
+    row: dict[str, str] = {}
+    for index, cell in enumerate(cells):
+        value = (cell or "").strip()
+        if not value:
+            continue
+        name = headers[index].strip() if index < len(headers) else ""
+        row[name or f"column {index + 1}"] = value
+    return row
+
+
 def _row_values(cells: list[str], columns: dict[int, str]) -> dict[str, str]:
     """Collapse a row onto canonical names, first non-empty column winning."""
     values: dict[str, str] = {}
@@ -562,6 +579,9 @@ def _row_record(
     *,
     pad_short: bool = False,
     notes: list[str] | None = None,
+    source_row: dict[str, str] | None = None,
+    source_file: str | None = None,
+    source_line: int | None = None,
 ) -> RawBinRecord:
     """Turn one resolved row into a record, or raise ``ValueError``."""
     raw_bin = values.get("bin", "")
@@ -625,6 +645,15 @@ def _row_record(
     # The list is hand-maintained and specific, so it is trusted more than a
     # bulk third-party feed, but never asserted as verified.
     fields["confidence"] = 0.9
+    # The row travels with the record under its own headers. The curated
+    # fields above are an interpretation of it and are narrower on purpose;
+    # narrower must not mean that the rest is thrown away.
+    if source_row:
+        fields["source_row"] = dict(source_row)
+    if source_file:
+        fields["source_file"] = source_file
+    if source_line:
+        fields["source_line"] = source_line
     return RawBinRecord.model_validate(fields)
 
 
@@ -684,6 +713,7 @@ def _read_one(
 ) -> bool:
     """Read one file into *report*. Returns whether a header was found."""
     columns: dict[int, str] | None = None
+    headers: list[str] = []
     label = path.name
     found_header = False
 
@@ -695,6 +725,7 @@ def _read_one(
             # an unrecognised column is raised rather than swallowed: a
             # mistyped header must not be mistaken for a missing one.
             columns = resolve_columns(cells)
+            headers = [(cell or "").strip() for cell in cells]
             found_header = True
             for name in sorted(set(columns.values())):
                 used = KNOWN_COLUMNS.get(name) is not None or name in RESOLVED_COLUMNS
@@ -706,7 +737,14 @@ def _read_one(
         values = _row_values(cells, columns)
         notes: list[str] = []
         try:
-            record = _row_record(values, pad_short=pad_short, notes=notes)
+            record = _row_record(
+                values,
+                pad_short=pad_short,
+                notes=notes,
+                source_row=_original_row(cells, headers),
+                source_file=label,
+                source_line=line,
+            )
         except ValueError as exc:
             raw = (values.get("bin") or "").strip()
             if raw.isdigit() and len(raw) < _MIN_BIN_LENGTH:

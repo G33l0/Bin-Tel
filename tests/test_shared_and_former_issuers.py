@@ -447,3 +447,48 @@ def test_an_exact_name_duplicate_is_still_caught_in_a_large_bucket(tmp_path):
     )
     assert report.blocks_skipped >= 1, "the crowded weak bucket should still be skipped"
     manager.close()
+
+
+def test_a_former_issuer_never_supplies_the_bins_country(manager):
+    """"The country of the bank that stopped issuing it" is a false positive.
+
+    A BIN whose only attachment has ended is a BIN nobody currently issues.
+    Answering with the departed bank's country states something about the BIN
+    today that is not true, however well evidenced that row was.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from sqlalchemy import select
+
+    from app.models.entities import Bin
+    from app.repositories.bin_repository import BinRepository
+    from app.services.bin_list import read_bin_list
+    from app.services.ingest_service import IngestService
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "bin-list.csv"
+        path.write_text(
+            "bin,bank,country,network,relationship,effective_to\n"
+            # Gives the institution a country, from a BIN it still issues.
+            "420001,Cascade Trust,GB,visa,,\n"
+            # This BIN has no country of its own and only a link that ended.
+            "420002,Cascade Trust,,visa,former_issuer,2024-06-30\n",
+            encoding="utf-8",
+        )
+        report = read_bin_list(path)
+
+    with manager.transaction() as session:
+        ingest = IngestService(session, source_code="test", source_name="Test")
+        for record in report.records:
+            ingest.ingest(record)
+
+    with manager.session() as session:
+        record = session.execute(
+            select(Bin).where(Bin.bin == "420002")
+        ).scalar_one()
+        profile = BinRepository._to_record(record)
+
+    assert profile.country is None
+    assert profile.issuer_name == "Unknown"
+    assert "Cascade Trust" in profile.former_issuers_label

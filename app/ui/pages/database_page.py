@@ -173,11 +173,53 @@ class DatabasePage(BasePage):
         source.body.addLayout(source_row)
         self.content.addWidget(source)
 
+        # -- what Bin-Tel has noticed but not decided ------------------------
+        self.learned_card = Card(self.surface, padding=18, spacing=10)
+        self.learned_card.body.addWidget(
+            SectionHeader(
+                "Waiting for you",
+                "Things Bin-Tel worked out or was told. None of this is in "
+                "your database; each one is here because it needs your "
+                "decision, not because it is going in.",
+                parent=self.learned_card,
+            )
+        )
+        self.learned_label = QLabel("", self.learned_card)
+        self.learned_label.setWordWrap(True)
+        self.learned_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.learned_card.body.addWidget(self.learned_label)
+
+        learned_row = hbox(spacing=10)
+        for key, label, primary in (
+            ("learn", "Look for more", False),
+            ("approve_learned", "Approve all", True),
+            ("reject_learned", "Dismiss all", False),
+        ):
+            button = QPushButton(label, self.learned_card)
+            button.setProperty("variant", "primary" if primary else "")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAccessibleName(label)
+            self.buttons[key] = button
+            learned_row.addWidget(button)
+        learned_row.addStretch(1)
+        self.learned_card.body.addLayout(learned_row)
+        self.learned_card.hide()
+        self.content.addWidget(self.learned_card)
+
         self.buttons["rebuild"].clicked.connect(self.rebuild_from_list)
         self.buttons["check_list"].clicked.connect(self.check_list)
         self.buttons["open_list"].clicked.connect(self.open_list_location)
         self.buttons["choose_list"].clicked.connect(self.choose_list)
         self.buttons["rollback"].clicked.connect(self.roll_back)
+        self.buttons["learn"].clicked.connect(self.gather_learning)
+        self.buttons["approve_learned"].clicked.connect(
+            lambda: self.decide_learned(approve=True)
+        )
+        self.buttons["reject_learned"].clicked.connect(
+            lambda: self.decide_learned(approve=False)
+        )
 
         self.buttons["check"].clicked.connect(lambda: self.navigate("updates"))
         self.buttons["update"].clicked.connect(lambda: self.navigate("updates"))
@@ -234,9 +276,11 @@ class DatabasePage(BasePage):
             self._set_maintenance_enabled(False)
             self._update_backup_summary()
             self.refresh_list_status()
+            self.learned_card.hide()
             return
 
         self.banner.hide()
+        self.refresh_learned()
         self._info = info
         stats = info.stats
         self.cards["status"].set_value(
@@ -358,6 +402,94 @@ class DatabasePage(BasePage):
         self.pad_short_bins.setVisible(bool(report.short_bins) or padding)
         self.list_status_label.setText(f"Ready to build — {report.summary}")
         self.buttons["rebuild"].setEnabled(True)
+
+    # -- learning ----------------------------------------------------------
+    def _learning_service(self, session):
+        from app.services.learning_service import Authorization, LearningService
+
+        return LearningService(
+            session, Authorization.from_settings(self.context.config.settings)
+        )
+
+    def refresh_learned(self) -> None:
+        """Show what is waiting, or hide the card when nothing is."""
+        from app.services.learning_service import LearningService
+
+        if not self.context.database.is_open:
+            self.learned_card.hide()
+            return
+        with self.context.manager.session() as session:
+            facts = LearningService(session).pending(limit=25)
+            lines = [
+                f"{'•' if fact.is_new_information else '!'}  {fact.subject_key} · "
+                f"{fact.field}: {fact.current_value or UNKNOWN_DISPLAY} → "
+                f"{fact.proposed_value}   ({fact.source_code})"
+                for fact in facts
+            ]
+            contradictions = sum(1 for fact in facts if not fact.is_new_information)
+        if not lines:
+            self.learned_card.hide()
+            return
+        heading = f"{len(lines):,} waiting"
+        if contradictions:
+            heading += (
+                f" — {contradictions:,} marked ! would overrule something you hold"
+            )
+        self.learned_label.setText(heading + "\n\n" + "\n".join(lines))
+        self.learned_card.show()
+
+    def gather_learning(self) -> None:
+        """Look for more, using only evidence already in the database."""
+        self._begin("Looking for what could be learned…")
+        try:
+            with self.context.manager.transaction() as session:
+                service = self._learning_service(session)
+                report = service.record(service.gather_local())
+        finally:
+            self._end()
+        self.refresh_learned()
+        self.toast(report.summary)
+
+    def decide_learned(self, *, approve: bool) -> None:
+        """Accept or dismiss everything waiting, after a confirmation."""
+        with self.context.manager.session() as session:
+            from app.services.learning_service import LearningService
+
+            facts = LearningService(session).pending(limit=10_000)
+            ids = [fact.id for fact in facts]
+            overruling = sum(1 for fact in facts if not fact.is_new_information)
+        if not ids:
+            return
+        if approve and overruling:
+            # Bulk-approving a contradiction is exactly the click that puts a
+            # wrong value into a database nobody re-checks, so it is the one
+            # that has to be asked for out loud.
+            confirmed = ConfirmDialog.ask(
+                self,
+                f"Overrule {overruling:,} value(s) you already hold?",
+                f"{overruling:,} of these {len(ids):,} proposals contradict "
+                "something already in your database rather than filling a gap. "
+                "Approving them all replaces those values.",
+                confirm_text="Approve all",
+            )
+            if not confirmed:
+                return
+
+        with self.context.manager.transaction() as session:
+            service = self._learning_service(session)
+            for fact_id in ids:
+                if approve:
+                    service.approve(fact_id, "approved in the app")
+                else:
+                    service.reject(fact_id, "dismissed in the app")
+            applied = service.apply_approved().applied if approve else 0
+
+        self.refresh_learned()
+        self.toast(
+            f"{applied:,} written into the database."
+            if approve
+            else f"{len(ids):,} dismissed."
+        )
 
     def check_list(self) -> None:
         self.refresh_list_status()

@@ -26,7 +26,7 @@ SUPPORT_URL: Final[str] = "https://bintel.org/support"
 DATABASE_FILENAME: Final[str] = "bintel.sqlite"
 
 #: Schema version this build of the application writes.
-SCHEMA_VERSION: Final[int] = 3
+SCHEMA_VERSION: Final[int] = 4
 
 #: Oldest database schema this build can open. A package below this needs a
 #: migration to be applied before it can be activated.
@@ -34,7 +34,7 @@ MIN_SCHEMA_VERSION: Final[int] = 1
 
 #: Newest database schema this build can open. A package above this requires a
 #: newer application — it is never opened blindly.
-MAX_SCHEMA_VERSION: Final[int] = 3
+MAX_SCHEMA_VERSION: Final[int] = 4
 
 #: Default distribution endpoint. Deliberately a *manifest* endpoint: it is a
 #: few hundred bytes, so an update check never downloads the full database.

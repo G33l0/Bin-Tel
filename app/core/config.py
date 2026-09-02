@@ -237,6 +237,41 @@ class ExternalSettings(_Section):
         return value
 
 
+class LearningSettings(_Section):
+    """Whether Bin-Tel may improve its own database, and on whose say-so.
+
+    Off by default, and off means off: an unauthorized source is not consulted,
+    so turning this on is what causes any request to be made at all.
+
+    Authorization and approval are separate on purpose. Listing a source here
+    permits it to be *asked*; what it answers still arrives as a proposal you
+    read. The one exception is ``auto_apply_new_information``, and even that
+    only covers filling a blank from a source whose licence is settled —
+    anything contradicting a value you curated waits for you regardless.
+    """
+
+    enabled: bool = False
+    #: Source codes that may be consulted. A name here is a decision; nothing
+    #: adds itself, and there is no implicit or default-on source.
+    authorized_sources: list[str] = Field(default_factory=list)
+    #: Apply a proposal that fills a blank, without reading it first. Never
+    #: applies anything that contradicts a value already held.
+    auto_apply_new_information: bool = False
+    #: Gather from evidence already in the database after every rebuild. Needs
+    #: no network and consults nothing, so it is safe to leave on.
+    learn_from_local_evidence: bool = True
+
+    @field_validator("authorized_sources")
+    @classmethod
+    def _clean_sources(cls, value: list[str]) -> list[str]:
+        seen: list[str] = []
+        for item in value:
+            code = str(item).strip().casefold()
+            if code and code not in seen:
+                seen.append(code)
+        return seen[:32]
+
+
 class AdvancedSettings(_Section):
     log_level: LogLevel = LogLevel.INFO
     log_retention_days: int = Field(default=14, ge=1, le=365)
@@ -258,6 +293,7 @@ class Settings(BaseModel):
     reports: ReportSettings = Field(default_factory=ReportSettings)
     privacy: PrivacySettings = Field(default_factory=PrivacySettings)
     external: ExternalSettings = Field(default_factory=ExternalSettings)
+    learning: LearningSettings = Field(default_factory=LearningSettings)
     advanced: AdvancedSettings = Field(default_factory=AdvancedSettings)
 
     def to_json(self) -> str:
@@ -285,6 +321,7 @@ class Settings(BaseModel):
             "reports": ReportSettings,
             "privacy": PrivacySettings,
             "external": ExternalSettings,
+            "learning": LearningSettings,
             "advanced": AdvancedSettings,
         }
         for name, section_cls in section_types.items():

@@ -433,6 +433,184 @@ def cmd_binlist(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _learning(args: argparse.Namespace):
+    """The authorization in force, from settings unless overridden."""
+    from app.services.learning_service import Authorization
+
+    config = ConfigManager(get_paths())
+    config.load()
+    auth = Authorization.from_settings(config.settings)
+    if getattr(args, "local_only", False):
+        # Local evidence needs no authorization to *read*, but the ledger is
+        # still the only place its conclusions go.
+        auth.enabled = True
+    return auth
+
+
+def cmd_learn(args: argparse.Namespace) -> int:
+    """Gather proposals. Nothing is written into the database by this."""
+    from app.services.learning_service import LearningService
+
+    auth = _learning(args)
+    targets = list(args.bin or [])
+    wants_external = bool(targets) and not args.local_only
+    # Reading your own database is not consulting anyone, so running this
+    # command is authorization enough for the local pass. Reaching outside
+    # this machine is a separate decision and stays behind the settings gate.
+    learning_off = wants_external and not auth.enabled
+
+    manager = _open(args)
+    try:
+        with manager.transaction() as session:
+            service = LearningService(session, auth)
+            report = service.record(service.gather_local())
+
+            if wants_external and auth.enabled:
+                from app.providers.binlist import BinlistProvider, RequestBudget
+
+                config = ConfigManager(get_paths())
+                config.load()
+                provider = BinlistProvider(
+                    endpoint=config.settings.external.binlist_endpoint,
+                    budget=RequestBudget(get_paths().config_dir / "binlist-budget.json"),
+                )
+                external = service.gather_external(provider, targets, report)
+                if external:
+                    report.proposed += service.record(external).proposed
+    finally:
+        manager.close()
+
+    print(report.summary)
+    if learning_off:
+        print()
+        print(
+            f"No external source was consulted about {', '.join(targets)}: learning "
+            "is off. Turn it on in Settings → Privacy → Learning, and authorize "
+            "the source you want asked."
+        )
+    if report.skipped_unauthorized:
+        print()
+        print(
+            "Not consulted, because they are not in your authorized list: "
+            + ", ".join(report.skipped_unauthorized)
+        )
+        print("Authorize one in Settings → Privacy → Learning.")
+    if report.examples:
+        print()
+        for example in report.examples:
+            print(f"  {example}")
+        print()
+        print("Nothing above has been written. Review it with `learned`.")
+    return EXIT_OK
+
+
+def cmd_learned(args: argparse.Namespace) -> int:
+    """List what is waiting for a decision."""
+    from app.services.learning_service import LearningService
+
+    manager = _open(args)
+    try:
+        with manager.session() as session:
+            facts = LearningService(session).pending(limit=args.limit)
+            if not facts:
+                print("Nothing is waiting for a decision.")
+                return EXIT_OK
+            print(f"{len(facts):,} proposal(s) waiting. None of these is in the database.")
+            print()
+            for fact in facts:
+                kind = "fills a blank" if fact.is_new_information else "CONTRADICTS what you hold"
+                print(f"  [{fact.id}] {fact.subject_key} · {fact.field} — {kind}")
+                print(f"        now: {fact.current_value or UNKNOWN_DISPLAY}")
+                print(f"        new: {fact.proposed_value}")
+                print(f"        via: {fact.source_code} (licence: {fact.licence})")
+                if fact.evidence:
+                    print(f"        why: {fact.evidence}")
+    finally:
+        manager.close()
+    return EXIT_OK
+
+
+def cmd_decide(args: argparse.Namespace) -> int:
+    """Approve or reject proposals, and write the approved ones."""
+    from app.services.learning_service import LearningService
+
+    manager = _open(args)
+    decided = 0
+    try:
+        with manager.transaction() as session:
+            service = LearningService(session)
+            targets = (
+                [fact.id for fact in service.pending(limit=10_000)]
+                if args.all
+                else list(args.ids)
+            )
+            for fact_id in targets:
+                acted = (
+                    service.approve(fact_id, args.reason)
+                    if args.decision == "approve"
+                    else service.reject(fact_id, args.reason)
+                )
+                if acted is not None:
+                    decided += 1
+            report = (
+                service.apply_approved()
+                if args.decision == "approve"
+                else None
+            )
+    finally:
+        manager.close()
+
+    word = "approved" if args.decision == "approve" else "rejected"
+    print(f"{decided:,} proposal(s) {word}.")
+    if report is not None and report.applied:
+        print(f"{report.applied:,} written into the database, with provenance:")
+        for example in report.examples:
+            print(f"  {example}")
+    return EXIT_OK
+
+
+def cmd_origin(args: argparse.Namespace) -> int:
+    """Show the source rows behind a BIN, exactly as they arrived."""
+    import json as _json
+
+    from sqlalchemy import select
+
+    from app.models.entities import Bin, SourceRow
+
+    manager = _open(args)
+    try:
+        with manager.session() as session:
+            record = session.execute(
+                select(Bin).where(Bin.bin == args.bin.strip())
+            ).scalar_one_or_none()
+            if record is None:
+                print(f"{args.bin} is not in the database.", file=sys.stderr)
+                return EXIT_ERROR
+            rows = (
+                session.execute(
+                    select(SourceRow)
+                    .where(SourceRow.bin_id == record.id)
+                    .order_by(SourceRow.source_file, SourceRow.line_number)
+                )
+                .scalars()
+                .all()
+            )
+            if not rows:
+                print(f"No source row was archived for {record.bin}.")
+                return EXIT_OK
+            print(f"{record.bin} — {len(rows)} source row(s), as they arrived:")
+            for row in rows:
+                print()
+                print(f"  {row.source_file or '?'}:{row.line_number or '?'}")
+                payload = _json.loads(row.payload or "{}")
+                width = max((len(key) for key in payload), default=0) + 2
+                for key, value in payload.items():
+                    print(f"    {key + ':':<{width}}{value}")
+    finally:
+        manager.close()
+    return EXIT_OK
+
+
 def cmd_dedupe(args: argparse.Namespace) -> int:
     """Find and, where the evidence supports it, resolve duplicate records."""
     from app.services.dedupe_service import DedupeService
@@ -894,6 +1072,39 @@ def build_parser() -> argparse.ArgumentParser:
         help=PAD_SHORT_HELP,
     )
     chk.set_defaults(func=cmd_check_list)
+
+    lrn = add("learn", "gather what could be learned; writes nothing into the database")
+    lrn.add_argument(
+        "bin",
+        nargs="*",
+        help="BINs to ask an authorized external source about (local evidence needs none)",
+    )
+    lrn.add_argument(
+        "--local-only",
+        action="store_true",
+        help="use only evidence already in the database; contact nothing",
+    )
+    lrn.set_defaults(func=cmd_learn)
+
+    lsd = add("learned", "list proposals waiting for a decision")
+    lsd.add_argument("--limit", type=int, default=50, help="how many to show")
+    lsd.set_defaults(func=cmd_learned)
+
+    apv = add("approve", "approve proposals and write them, with provenance")
+    apv.add_argument("ids", nargs="*", type=int, help="proposal ids from `learned`")
+    apv.add_argument("--all", action="store_true", help="every pending proposal")
+    apv.add_argument("--reason", default="", help="why, kept with the decision")
+    apv.set_defaults(func=cmd_decide, decision="approve")
+
+    rej = add("reject", "decline proposals, so they are not raised again")
+    rej.add_argument("ids", nargs="*", type=int, help="proposal ids from `learned`")
+    rej.add_argument("--all", action="store_true", help="every pending proposal")
+    rej.add_argument("--reason", default="", help="why, kept with the decision")
+    rej.set_defaults(func=cmd_decide, decision="reject")
+
+    org = add("origin", "show the source rows behind a BIN, exactly as they arrived")
+    org.add_argument("bin", help="the BIN to trace")
+    org.set_defaults(func=cmd_origin)
 
     bl = add("binlist", "ask binlist.net about one BIN (5 per hour, nothing stored)")
     bl.add_argument("bin", help="the BIN to look up")

@@ -235,3 +235,23 @@ def test_staging_reports_nothing_when_empty(capsys, database_path):
     code, out = run(capsys, "staging", "--database", str(database_path))
     assert code == EXIT_OK
     assert "Nothing is staged" in out
+
+
+def test_learn_says_why_nothing_external_was_consulted(tmp_path, capsys, monkeypatch):
+    """Silence would read as "asked and got nothing", which is not what happened."""
+    from app.cli import main
+    from app.core.paths import reset_paths_cache
+
+    monkeypatch.setenv("BINTEL_DATA_DIR", str(tmp_path))
+    reset_paths_cache()
+    listing = tmp_path / "bin-list.csv"
+    listing.write_text("bin,bank,country\n410000,Cascade Bank,US\n", encoding="utf-8")
+
+    assert main(["rebuild", "--list", str(listing), "--data-dir", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["learn", "410000", "--data-dir", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "learning is off" in output
+    assert "410000" in output
+    reset_paths_cache()

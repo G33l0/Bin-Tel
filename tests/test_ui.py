@@ -299,3 +299,29 @@ def test_binlist_being_unavailable_never_breaks_the_page(window, qapp):
 
     assert page.result_card.issuer_label.text() == local_answer
     assert not page.external_panel.banner.isHidden()
+
+
+def test_learning_is_off_and_authorizes_nothing_until_it_is_turned_on(qtbot, context):
+    """The settings page must not be a route around the authorization gate."""
+    from app.services.learning_service import Authorization
+    from app.ui.pages.settings_page import SettingsPage
+
+    page = SettingsPage(context)
+    qtbot.addWidget(page)
+
+    assert not page.learning_enabled.isChecked()
+    assert not page.learning_binlist.isChecked()
+    assert not page.learning_auto_apply.isChecked()
+
+    auth = Authorization.from_settings(context.config.settings)
+    assert not auth.is_authorized("binlist.net")
+
+    page.learning_enabled.setChecked(True)
+    auth = Authorization.from_settings(context.config.settings)
+    # Enabled, but no source named: still nothing may be consulted.
+    assert auth.enabled
+    assert not auth.is_authorized("binlist.net")
+
+    page.learning_binlist.setChecked(True)
+    auth = Authorization.from_settings(context.config.settings)
+    assert auth.is_authorized("binlist.net")

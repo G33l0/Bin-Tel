@@ -308,6 +308,22 @@ def _to_v3(engine: Engine) -> None:
     _add_column(engine, "bins", "card_level", "VARCHAR(48)")
 
 
+@register(4, "keep every source column, and hold what is learned before writing it")
+def _to_v4(engine: Engine) -> None:
+    """Two tables that only ever add, never overwrite.
+
+    ``source_rows`` keeps each list row under its own headers, so the curated
+    columns stop being the only surviving record of what a source said.
+    ``learned_facts`` holds anything Bin-Tel works out or is told until it is
+    authorized and approved — an older package simply has neither, and gains
+    both empty, which claims nothing about its existing rows.
+    """
+    from app.models.entities import LearnedFact, SourceRow
+
+    for model in (SourceRow, LearnedFact):
+        model.__table__.create(engine, checkfirst=True)
+
+
 def ensure_optional_tables(engine: Engine) -> list[str]:
     """Create tables this build expects but an older package may not carry.
 
@@ -322,7 +338,9 @@ def ensure_optional_tables(engine: Engine) -> list[str]:
         DatabaseStatistic,
         DatabaseVersion,
         InstitutionHistory,
+        LearnedFact,
         NormalizationEvent,
+        SourceRow,
         UpdateHistory,
     )
 
@@ -330,6 +348,8 @@ def ensure_optional_tables(engine: Engine) -> list[str]:
         BinHistory,
         InstitutionHistory,
         DatabaseVersion,
+        SourceRow,
+        LearnedFact,
         DatabaseStatistic,
         UpdateHistory,
         NormalizationEvent,

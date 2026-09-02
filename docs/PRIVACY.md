@@ -64,3 +64,21 @@ above lives in plain files you can inspect, back up, or delete.
 Logs record what the application did, never what your data was. The log
 formatter redacts anything that looks like a long digit string, and never
 writes a full lookup input. Deleting the logs directory is always safe.
+
+## Learning, and what leaves this machine
+
+Bin-Tel can note things it works out, and — if you authorize a source by name —
+things a service outside this machine says. Neither writes to your database on
+its own; both become proposals you read. See [LEARNING.md](LEARNING.md).
+
+What this means for what leaves your machine:
+
+* **With learning off** — nothing. It is off by default.
+* **With learning on but no source authorized** — still nothing. Local
+  evidence is read from your own database; no request is made.
+* **With a source authorized** — the 6 or 8 BIN digits you named, to that
+  service, when you run a gather. Never a full card number, never your list,
+  never in bulk, and never in the background.
+
+Nothing is scraped, no paywall, rate limit or access restriction is bypassed,
+and no undocumented endpoint is used.

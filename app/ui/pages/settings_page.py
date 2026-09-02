@@ -467,10 +467,55 @@ class SettingsPage(BasePage):
         self.binlist_note.setProperty("role", "muted")
         external.body.addWidget(self.binlist_note)
         layout.addWidget(external)
+
+        learning = SettingsSection(
+            "Learning",
+            "Bin-Tel can note things it works out or is told, so the database "
+            "improves over time. What it notes is a proposal you read — nothing "
+            "reaches your database because a source said so.",
+            page,
+        )
+        self.learning_enabled = learning.add_setting(
+            "Let Bin-Tel note what it could learn",
+            QCheckBox(),
+            "After a rebuild it looks at the evidence it already holds — "
+            "unresolved disagreements, gaps a related row could fill — and "
+            "records what it finds. This needs no network and contacts nothing.",
+        )
+        self.learning_binlist = learning.add_setting(
+            "Authorize binlist.net as a source it may ask",
+            QCheckBox(),
+            "Only for BINs you name, and only within the five-an-hour "
+            "allowance. A source you authorize is a source that may be asked; "
+            "what it answers still waits for you.",
+        )
+        self.learning_auto_apply = learning.add_setting(
+            "Apply what fills a blank, without asking me first",
+            QCheckBox(),
+            "Only where Bin-Tel holds nothing at all, and only from a source "
+            "whose licence is settled. Anything that contradicts a value you "
+            "curated always waits for you, whatever it came from.",
+        )
+        self.learning_note = QLabel(
+            "Applied values keep their provenance: what proposed them, when, "
+            "and under what licence. Review anything waiting in Database → "
+            "Learned, or with `python -m app.cli learned`.",
+            learning,
+        )
+        self.learning_note.setWordWrap(True)
+        self.learning_note.setProperty("role", "muted")
+        learning.body.addWidget(self.learning_note)
+        layout.addWidget(learning)
         layout.addItem(expanding_spacer(horizontal=False))
 
         self.remember_search_history.toggled.connect(self._save_privacy)
         self.binlist_enabled.toggled.connect(self._save_external)
+        for control in (
+            self.learning_enabled,
+            self.learning_binlist,
+            self.learning_auto_apply,
+        ):
+            control.toggled.connect(self._save_learning)
         return page
 
     def _build_appearance(self) -> QWidget:
@@ -685,6 +730,11 @@ class SettingsPage(BasePage):
         self.remember_search_history.setChecked(privacy.remember_search_history)
         self.binlist_enabled.setChecked(settings.external.binlist_enabled)
 
+        learning = settings.learning
+        self.learning_enabled.setChecked(learning.enabled)
+        self.learning_binlist.setChecked("binlist.net" in learning.authorized_sources)
+        self.learning_auto_apply.setChecked(learning.auto_apply_new_information)
+
         appearance = settings.appearance
         self._populate_themes()
         self._select_data(self.theme_combo, appearance.theme)
@@ -821,6 +871,24 @@ class SettingsPage(BasePage):
             else "binlist.net lookups are off."
         )
         self.external_changed.emit()
+
+    def _save_learning(self) -> None:
+        if self._loading:
+            return
+        learning = self.context.config.settings.learning
+        learning.enabled = self.learning_enabled.isChecked()
+        # Assignment rather than mutation: the settings model validates on
+        # assignment, so the list is cleaned and de-duplicated on the way in.
+        sources = [code for code in learning.authorized_sources if code != "binlist.net"]
+        if self.learning_binlist.isChecked():
+            sources.append("binlist.net")
+        learning.authorized_sources = sources
+        learning.auto_apply_new_information = self.learning_auto_apply.isChecked()
+        self._persist(
+            "Bin-Tel will note what it could learn. Nothing is written without you."
+            if learning.enabled
+            else "Learning is off."
+        )
 
     def _choose_backup_directory(self) -> None:
         directory = QFileDialog.getExistingDirectory(

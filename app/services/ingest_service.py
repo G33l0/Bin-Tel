@@ -13,6 +13,7 @@ in ``conflicts`` (and in ``bin_claims``) so the disagreement is recoverable.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -45,6 +46,7 @@ from app.models.entities import (
     RecordStatus,
     RelationshipType,
     Source,
+    SourceRow,
 )
 from app.normalizers.bin_normalizer import bin_normalizer
 from app.normalizers.card_normalizer import card_normalizer
@@ -138,6 +140,13 @@ class RawBinRecord(BaseModel):
     effective_to: datetime | None = None
     #: How this record relates the institution to the BIN. Defaults to issuer.
     relationship: str | None = None
+    #: The row this record was read from, under the source's own column names.
+    #: Carried so nothing a source said is lost to the curated fields, which
+    #: are narrower on purpose. Never interpreted here — it is kept, not read.
+    source_row: dict[str, str] = {}
+    #: Where that row came from: file name and line, for checking against.
+    source_file: str | None = None
+    source_line: int | None = None
 
 
 @dataclass(slots=True)
@@ -575,6 +584,31 @@ class IngestService:
             )
         )
 
+    def _archive_source_row(self, record: Bin, raw: RawBinRecord) -> None:
+        """Keep the row this record was read from, under its own headers.
+
+        The curated columns are an interpretation and a narrow one: a country
+        spelled three ways becomes one code, a coordinate pair Bin-Tel will
+        not assert as an address is not stored as one, and a column it has no
+        field for has nowhere to go. All of that still happened, and the row
+        is what says so.
+
+        Written once per row, not once per field, and skipped entirely when a
+        record arrived without one — an external reading has no file behind it.
+        """
+        if not raw.source_row:
+            return
+        self._session.add(
+            SourceRow(
+                bin_id=record.id,
+                # The name only. A full path would put a home directory into a
+                # database that is meant to be portable.
+                source_file=(raw.source_file or "")[:128] or None,
+                line_number=raw.source_line,
+                payload=json.dumps(raw.source_row, ensure_ascii=False),
+            )
+        )
+
     # -- main entry point -------------------------------------------------
     def ingest(self, raw: RawBinRecord, result: IngestResult | None = None) -> str:
         """Normalize and write one record. Returns the action taken."""
@@ -678,6 +712,7 @@ class IngestService:
                 result.unchanged += 1
 
         self._record_claims(record, raw, values)
+        self._archive_source_row(record, raw)
 
         if institution is not None:
             self._link(
