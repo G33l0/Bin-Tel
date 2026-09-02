@@ -107,16 +107,33 @@ zeros from a numeric column, so this may be '042410' — rebuild with
 --pad-short-bins if you know that is what happened to this file
 ```
 
-`--pad-short-bins` left-pads them back. It is **off by default and should stay
-off unless you know the file went through a spreadsheet**: `42410` and `042410`
-are different BINs, and choosing between them without evidence would be
-inventing data.
+`--pad-short-bins` left-pads them back to the length an assignment actually
+comes in — sixes and eights. Four and five digits become six; seven becomes
+eight, because nothing is issued at seven digits, so a surviving seven is an
+eight that lost one zero.
+
+It is **off by default and should stay off unless you know the file went
+through a spreadsheet**: `42410` and `042410` are different BINs, and choosing
+between them without evidence would be inventing data.
 
 Signs that the zeros really were stripped: the file contains four- and
 five-digit values but *no* six-digit value beginning with `0`, and it also
 contains a number rendered in scientific notation — proof it passed through a
-spreadsheet. Save the source as text, or format the BIN column as text before
-opening it, and the problem does not arise at all.
+spreadsheet.
+
+### What padding cannot recover
+
+**An eight-digit BIN beginning `00` comes out of Excel as six digits, and
+there is nothing left to tell it apart from a genuine six-digit BIN.**
+`00412345` and `412345` are the same six characters once the zeros are gone.
+Padding restores the values whose length still shows the damage; it cannot
+restore one whose damage left it looking legitimate.
+
+So a padded file is *better* than an unpadded one, not *correct*. The only
+way to be sure is to go back to the source: save it as text (`.txt` or
+`.tsv`), or format the BIN column as **Text** in the spreadsheet *before*
+opening it, and none of this arises. Where the padded file and a clean export
+disagree, the clean export is right.
 
 ---
 

@@ -464,3 +464,27 @@ def test_a_bad_bin_is_one_skipped_row_not_the_end_of_the_file(tmp_path):
     report = read_bin_list(path)
     assert report.accepted == 2
     assert report.rejected == 1
+
+
+def test_padding_restores_a_seven_digit_value_to_eight(tmp_path):
+    """Nothing is assigned at seven digits, so seven is an eight missing a zero."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin,bank\n4141234,Cascade Bank\n42410,Meridian Trust\n414123,Harbor Mutual\n",
+    )
+    report = read_bin_list(path, pad_short_bins=True)
+    assert {record.bin for record in report.records} == {
+        "04141234",  # seven digits, restored to an eight-digit assignment
+        "042410",  # five digits, restored to a six-digit one
+        "414123",  # already six; left exactly as it is
+    }
+    assert report.padded_bins == 2
+
+
+def test_a_seven_digit_value_is_untouched_without_padding(tmp_path):
+    """Only a file declared damaged gets repaired."""
+    path = write_named(tmp_path, "bin-list.csv", "bin,bank\n4141234,Cascade Bank\n")
+    report = read_bin_list(path)
+    assert report.records[0].bin == "4141234"
+    assert report.padded_bins == 0

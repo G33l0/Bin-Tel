@@ -37,6 +37,11 @@ counted, and a short BIN is refused unless you say explicitly that the zeros
 were lost, because ``42410`` and ``042410`` are different BINs and quietly
 choosing one would be a fabrication.
 
+Even when you do say so, the repair is partial and the documentation says so:
+an eight-digit BIN beginning ``00`` survives as six digits, which is
+indistinguishable from a genuine six-digit BIN. Padding restores what still
+looks damaged, not what was damaged into looking fine.
+
 Nothing here validates a payment card. The BIN is a prefix, not a number: input
 longer than a BIN is refused rather than truncated, so a full card number
 cannot be entered into a list by accident.
@@ -207,6 +212,11 @@ _BIN_PATTERN = re.compile(r"^\d{6,8}$")
 
 #: The shortest real BIN.
 _MIN_BIN_LENGTH = 6
+
+#: The length an assignment is restored to when zeros are known to be missing.
+#: Assignments come in sixes and eights, so a surviving seven digits lost one
+#: zero off an eight, and anything under six lost one or two off a six.
+_LONG_BIN_LENGTH = 8
 
 #: Anything longer than a BIN is refused outright. A 12+ digit string in this
 #: file would be a card number, and Bin-Tel never accepts one.
@@ -508,6 +518,11 @@ def normalise_bin(value: str, *, pad_short: bool = False) -> str:
                 "if you know that is what happened to this file"
             )
         digits = digits.zfill(_MIN_BIN_LENGTH)
+    elif pad_short and len(digits) == _LONG_BIN_LENGTH - 1:
+        # Seven is not a length anything is assigned at. In a file whose zeros
+        # are known to be missing it is an eight that lost one, so it is
+        # restored to eight rather than kept as a prefix nobody issued.
+        digits = digits.zfill(_LONG_BIN_LENGTH)
     if not _BIN_PATTERN.match(digits):
         raise ValueError(f"{digits!r} is {len(digits)} digits; a BIN is 6 to 8")
     return digits
@@ -553,7 +568,7 @@ def _row_record(
     digits = normalise_bin(raw_bin, pad_short=pad_short)
     if notes is not None:
         stripped = re.sub(r"[\s\-]", "", (raw_bin or "").strip())
-        if stripped.isdigit() and len(stripped) < _MIN_BIN_LENGTH:
+        if stripped.isdigit() and len(stripped) != len(digits):
             notes.append("short")
 
     fields: dict[str, object] = {"bin": digits}
