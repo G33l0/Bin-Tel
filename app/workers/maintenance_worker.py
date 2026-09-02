@@ -90,17 +90,20 @@ class RebuildWorker(Worker[RebuildOutcome]):
         list_path: Path | None = None,
         *,
         allow_shrink: bool = False,
+        pad_short_bins: bool = False,
     ) -> None:
         super().__init__(self._execute)
         self._service = service
         self._list_path = list_path
         self._allow_shrink = allow_shrink
+        self._pad_short_bins = pad_short_bins
 
     def _execute(self) -> RebuildOutcome:
         return self._service.rebuild(
             self._list_path,
             progress=lambda message: self.signals.progress.emit(message),
             allow_shrink=self._allow_shrink,
+            pad_short_bins=self._pad_short_bins,
         )
 
 

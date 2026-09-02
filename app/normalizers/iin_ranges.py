@@ -49,8 +49,13 @@ ALLOCATIONS: tuple[Allocation, ...] = (
     ("diners", "3095", "3095"),
     ("diners", "36", "36"),
     ("diners", "38", "39"),
-    # JCB.
+    # JCB — the current block, and the two legacy allocations it issued under
+    # before moving to 35xx. Cards on them are still in circulation and still
+    # turn up in real lists, so leaving them out made every 1800xx row look
+    # like UATP.
     ("jcb", "3528", "3589"),
+    ("jcb", "1800", "1800"),
+    ("jcb", "2131", "2131"),
     # Discover — 6011, the 644–649 block, 65, and the 622126–622925 block.
     # That last one is also inside UnionPay's published 62, and both are listed
     # deliberately: a prefix in it is genuinely dual-claimed, and the honest
@@ -63,7 +68,10 @@ ALLOCATIONS: tuple[Allocation, ...] = (
     ("unionpay", "62", "62"),
     # Mir.
     ("mir", "2200", "2204"),
-    # UATP, which uses major industry identifier 1.
+    # UATP, which uses major industry identifier 1. MII 1 is the *airline*
+    # industry rather than one scheme's allocation, so this entry is broad on
+    # purpose and overlaps JCB's legacy 1800. A prefix inside both is reported
+    # as undecided rather than as UATP — see network_for_prefix.
     ("uatp", "1", "1"),
 )
 

@@ -263,3 +263,24 @@ def test_a_corrupt_previous_database_is_not_restored(workspace):
         service.rollback()
     assert manager.is_open
     assert lookup_for(manager).lookup("410010").found
+
+
+def test_the_padding_option_appears_only_when_the_list_needs_it(qtbot, context, tmp_path):
+    """Offering it on a clean list invites someone to tick it where it is wrong."""
+    from app.ui.pages.database_page import DatabasePage
+
+    clean = tmp_path / "clean.csv"
+    clean.write_text("bin,bank\n410000,Cascade Bank\n", encoding="utf-8")
+    context.config.set_bin_list_path(clean)
+
+    page = DatabasePage(context)
+    qtbot.addWidget(page)
+    page.refresh_list_status()
+    # isHidden rather than isVisible: the page itself is never shown here.
+    assert page.pad_short_bins.isHidden()
+
+    short = tmp_path / "short.csv"
+    short.write_text("bin,bank\n42410,Cascade Bank\n410000,Meridian\n", encoding="utf-8")
+    context.config.set_bin_list_path(short)
+    page.refresh_list_status()
+    assert not page.pad_short_bins.isHidden()

@@ -241,6 +241,9 @@ class BinRecord(_DTO):
     bin_range: str | None = None
     network: NetworkDTO | None = None
     brand: str | None = None
+    #: The product tier the source named — Gold, Platinum, World. Kept apart
+    #: from the brand so a result can say "Visa" and "Gold" separately.
+    card_level: str | None = None
     card_type: str | None = None
     funding_type: str | None = None
     is_prepaid: bool | None = None
@@ -395,6 +398,7 @@ class BinRecord(_DTO):
             ("BIN Range", display(self.bin_range)),
             ("Network", self.network.label if self.network else UNKNOWN_DISPLAY),
             ("Card Brand", display(self.brand)),
+            ("Card Level", display(self.card_level)),
             ("Card Type", display(self.card_type)),
             ("Funding Type", display(self.funding_type)),
             ("Prepaid", display_optional_bool(self.is_prepaid)),
@@ -427,6 +431,7 @@ class BinRow(_DTO):
     bin: str
     network: str | None = None
     brand: str | None = None
+    card_level: str | None = None
     card_type: str | None = None
     funding_type: str | None = None
     country: str | None = None

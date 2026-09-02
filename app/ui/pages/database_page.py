@@ -5,7 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFileDialog, QLabel, QProgressBar, QPushButton, QWidget
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QFileDialog,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QWidget,
+)
 
 from app.core.constants import UNKNOWN_DISPLAY
 from app.database.integrity import VerificationReport
@@ -132,6 +139,21 @@ class DatabasePage(BasePage):
         self.list_status_label.setProperty("role", "muted")
         self.list_status_label.setWordWrap(True)
         source.body.addWidget(self.list_status_label)
+
+        # Shown only when the list actually contains BINs shorter than a BIN,
+        # because offering to pad a file that needs no padding invites someone
+        # to tick it on a list where it would be wrong.
+        self.pad_short_bins = QCheckBox(
+            "Restore leading zeros a spreadsheet stripped from the BIN column",
+            source,
+        )
+        self.pad_short_bins.setToolTip(
+            "Only tick this if you know the list has been through a "
+            "spreadsheet. 42410 and 042410 are different BINs."
+        )
+        self.pad_short_bins.hide()
+        self.pad_short_bins.toggled.connect(lambda _: self.refresh_list_status())
+        source.body.addWidget(self.pad_short_bins)
 
         source_row = hbox(spacing=10)
         for key, label, primary in (
@@ -324,12 +346,16 @@ class DatabasePage(BasePage):
         path = self.list_path
         self.list_path_label.setText(str(path))
         self.buttons["rollback"].setEnabled(self.context.rebuilds.can_roll_back)
+        padding = self.pad_short_bins.isChecked()
         try:
-            report = read_bin_list(path)
+            report = read_bin_list(path, pad_short_bins=padding)
         except BinTelError as exc:
             self.list_status_label.setText(f"{exc.message} {exc.detail or ''}".strip())
             self.buttons["rebuild"].setEnabled(False)
             return
+        # Keep the option visible once it has been offered, so unticking it is
+        # possible: a padded read reports no short BINs of its own.
+        self.pad_short_bins.setVisible(bool(report.short_bins) or padding)
         self.list_status_label.setText(f"Ready to build — {report.summary}")
         self.buttons["rebuild"].setEnabled(True)
 
@@ -358,7 +384,10 @@ class DatabasePage(BasePage):
     def rebuild_from_list(self, *, allow_shrink: bool = False) -> None:
         self._begin("Rebuilding from the BIN list…")
         worker = RebuildWorker(
-            self.context.rebuilds, self.list_path, allow_shrink=allow_shrink
+            self.context.rebuilds,
+            self.list_path,
+            allow_shrink=allow_shrink,
+            pad_short_bins=self.pad_short_bins.isChecked(),
         )
         worker.signals.progress.connect(self._on_rebuild_progress)
         worker.signals.result.connect(self._on_rebuilt)

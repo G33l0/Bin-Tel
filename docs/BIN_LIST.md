@@ -1,10 +1,11 @@
 # The BIN list
 
-Bin-Tel's database is built from one file you maintain: **`data/bin-list.csv`**.
+Bin-Tel's database is built from files you maintain: **`data/bin-list.csv`**,
+plus anything you drop into a **`bin-lists/`** folder beside it.
 
-Add rows to it, rebuild, and the application is looking at the new data. That
-is the entire workflow — there is no import step to remember, no merge to
-reason about, and no way for the database to drift away from the list.
+Add rows, rebuild, and the application is looking at the new data. That is the
+entire workflow — there is no import step to remember, no merge to reason
+about, and no way for the database to drift away from the lists.
 
 ```bash
 python -m app.cli rebuild
@@ -25,16 +26,22 @@ bin,bank
 530001,Meridian Trust Bank
 ```
 
+`bank` may be blank. A row that gives a BIN, its scheme and its country but no
+bank is a real fact, and it is kept with the issuer recorded as unknown —
+discarding it would mean answering *not found* to a BIN the list plainly
+contains.
+
 Everything else is optional, may be left blank, and may appear in any order:
 
 | Column | What it means |
 |---|---|
 | `bin` | **required** — 6 to 8 digits |
-| `bank` | **required** — the institution |
+| `bank` | the institution; may be blank |
 | `bin_high` | the last BIN in a range (blank for a single BIN) |
 | `range_type` | `issuer_range`, `account_range` or `product_range` |
 | `network` | visa, mastercard, amex, discover, jcb, unionpay… |
 | `brand` | the card product, e.g. "Signature", "World Elite" |
+| `card_level` | the product tier: Standard, Gold, Platinum, World, Titanium |
 | `card_type` | credit, debit, charge, prepaid |
 | `funding_type` | how the account is funded |
 | `prepaid`, `commercial` | yes/no |
@@ -47,8 +54,69 @@ Everything else is optional, may be left blank, and may appear in any order:
 | `notes` | anything you want to remember; never ingested |
 
 Lines beginning with `#` are ignored, so you can keep notes in the file itself.
-A UTF-8 byte-order mark is handled, and common spellings of the column names —
-`iin`, `issuer`, `bank_name`, `scheme`, `country_code` — are accepted.
+A UTF-8 byte-order mark is handled.
+
+---
+
+## Lists that came from somewhere else
+
+Real datasets do not arrive in Bin-Tel's column names, and they are not
+expected to. Four accommodations, none of which involve guessing:
+
+**Other spellings.** `iin`, `issuer`, `bank_name`, `scheme`, `country_code`,
+`isoCode2`, `alpha_2`, `IssuerUrl`, `bank_phone` and the French
+`Pays` / `Emetteur` / `Marque` / `Niveau` all resolve to the columns above. A
+spelling nobody has taught the reader is still an error — see below.
+
+**Tabs, semicolons and pipes.** The delimiter is taken from the header line, so
+a `.tsv` export needs no conversion.
+
+**Several lists in one file.** A fresh header part-way down starts a new
+section with its own columns, so three lists can be pasted into one file
+without reconciling their headers first. Each section may use its own
+delimiter. Keeping each dataset as its own file in `bin-lists/` is tidier, and
+both work.
+
+**One country, spelled three ways.** A file carrying `alpha_2`, `alpha_3` and
+`country` is describing one country. The two-letter code wins, then the
+three-letter code, then the name.
+
+Two columns are recognised and deliberately **not** stored: `latitude` and
+`longitude`. In every dataset seen so far they hold the *country's* centroid
+repeated on every row rather than the bank's address, and storing a country
+centroid as an institution's location would be a fabrication with a decimal
+point on it.
+
+---
+
+## Lists that have been through a spreadsheet
+
+Excel damages BIN lists in two specific ways, and neither is repaired quietly.
+
+**Long numbers become floats.** A phone number stored as `5.51732E+11` has lost
+its digits for good. The value is dropped, the row is kept, and `check-list`
+counts what it discarded.
+
+**Leading zeros are stripped.** A `bin` column read as a number turns `042410`
+into `42410`. The reader refuses anything under six digits and says what the
+value may have been:
+
+```
+line 2: '42410' is 5 digits; a BIN is 6 to 8. A spreadsheet strips leading
+zeros from a numeric column, so this may be '042410' — rebuild with
+--pad-short-bins if you know that is what happened to this file
+```
+
+`--pad-short-bins` left-pads them back. It is **off by default and should stay
+off unless you know the file went through a spreadsheet**: `42410` and `042410`
+are different BINs, and choosing between them without evidence would be
+inventing data.
+
+Signs that the zeros really were stripped: the file contains four- and
+five-digit values but *no* six-digit value beginning with `0`, and it also
+contains a number rendered in scientific notation — proof it passed through a
+spreadsheet. Save the source as text, or format the BIN column as text before
+opening it, and the problem does not arise at all.
 
 ---
 

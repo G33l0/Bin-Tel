@@ -120,6 +120,24 @@ def test_migrating_a_current_package_is_a_no_op(manager):
     assert result.to_version == SCHEMA_VERSION
 
 
+def test_a_package_without_the_card_level_column_gains_it(manager):
+    """An older package simply has no tier recorded, which is the truth."""
+    with manager.engine.begin() as connection:
+        connection.exec_driver_sql("ALTER TABLE bins DROP COLUMN card_level")
+    assert migrations.pending(SCHEMA_VERSION - 1)
+    migrations._to_v3(manager.engine)
+    columns = {
+        row[1]
+        for row in manager.engine.raw_connection()
+        .cursor()
+        .execute("PRAGMA table_info(bins)")
+        .fetchall()
+    }
+    assert "card_level" in columns
+    # Running it again is harmless: the column is already there.
+    migrations._to_v3(manager.engine)
+
+
 def test_optional_tables_are_created_when_absent(manager):
     with manager.engine.begin() as connection:
         connection.execute(text("DROP TABLE IF EXISTS database_statistics"))

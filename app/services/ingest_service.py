@@ -52,7 +52,7 @@ from app.normalizers.geo_normalizer import geo_normalizer
 from app.normalizers.name_normalizer import name_normalizer
 from app.normalizers.network_normalizer import NETWORKS, network_normalizer
 from app.normalizers.reference import BY_ISO2
-from app.normalizers.text import squash
+from app.normalizers.text import sanitise_text, squash
 
 logger = get_logger(__name__)
 
@@ -61,6 +61,7 @@ logger = get_logger(__name__)
 CONFLICT_FIELDS = (
     "network",
     "brand",
+    "card_level",
     "card_type",
     "funding_type",
     "country",
@@ -68,6 +69,24 @@ CONFLICT_FIELDS = (
     "issuer",
     "status",
 )
+
+
+def _brand_label(brand: str | None, network: Network | None) -> str | None:
+    """The brand to store, tidied but never invented.
+
+    Sources shout their scheme in the brand column — ``VISA``, ``MASTERCARD``.
+    Where the brand names the very scheme already resolved for the record, the
+    catalogue's spelling of that scheme is used, so one result does not read
+    "Visa" and the next "VISA". Anything the catalogue does not recognise
+    (``PAGOBANCOMAT``, ``LOCAL BRAND``) is kept exactly as the source wrote
+    it — the words are evidence, and rewriting them would be a guess.
+    """
+    text = sanitise_text(brand, limit=64)
+    if text is None:
+        return network.display_name if network else None
+    if network is not None and network_normalizer.normalize(text).code == network.code:
+        return network.display_name
+    return text
 
 
 class RawBinRecord(BaseModel):
@@ -85,6 +104,10 @@ class RawBinRecord(BaseModel):
     network: str | None = None
     brand: str | None = None
     card_type: str | None = None
+    #: The product tier a source names — STANDARD, GOLD, PLATINUM, WORLD,
+    #: TITANIUM, BUSINESS. Kept as its own field rather than folded into the
+    #: brand, because "Visa" and "Gold" are two different facts about a card.
+    card_level: str | None = None
     funding_type: str | None = None
     prepaid: str | bool | None = None
     commercial: str | bool | None = None
@@ -601,7 +624,8 @@ class IngestService:
 
         values: dict[str, Any] = {
             "network_id": network.id if network else None,
-            "brand": raw.brand or (network.display_name if network else None),
+            "brand": _brand_label(raw.brand, network),
+            "card_level": card_normalizer.card_level(raw.card_level),
             "card_type": card_type.value,
             "funding_type": funding.value,
             "is_prepaid": card_normalizer.is_prepaid(raw.prepaid, card_type),

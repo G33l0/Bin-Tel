@@ -496,6 +496,11 @@ class Bin(Base):
     prefix8: Mapped[str | None] = mapped_column(String(8))
     network_id: Mapped[int | None] = mapped_column(ForeignKey("networks.id", ondelete="SET NULL"))
     brand: Mapped[str | None] = mapped_column(String(64))
+    #: The product tier as the source named it — Gold, Platinum, World,
+    #: Titanium, Business. Separate from ``brand`` because "Visa" and "Gold"
+    #: are two different facts, and folding them into one string loses the
+    #: ability to filter on either.
+    card_level: Mapped[str | None] = mapped_column(String(48))
     card_type: Mapped[str] = mapped_column(String(24), default=CardType.UNKNOWN.value)
     funding_type: Mapped[str] = mapped_column(String(24), default=FundingType.UNKNOWN.value)
     is_prepaid: Mapped[bool | None] = mapped_column(Boolean)

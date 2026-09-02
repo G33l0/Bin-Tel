@@ -41,6 +41,13 @@ EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_INVALID = 2
 
+#: Shared between rebuild and check-list, because the two have to agree:
+#: checking a list under one reading and building it under another would
+#: report a clean file and then produce a different database.
+PAD_SHORT_HELP = (
+    "treat a BIN shorter than 6 digits as one a spreadsheet stripped the leading zeros from, and pad it back"
+)
+
 
 # ---------------------------------------------------------------------------
 # Shared plumbing
@@ -275,6 +282,7 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             version=args.db_version,
             progress=lambda message: print(f"  {message}"),
             allow_shrink=args.allow_shrink,
+            pad_short_bins=args.pad_short_bins,
         )
     finally:
         manager.close()
@@ -330,18 +338,42 @@ def cmd_check_list(args: argparse.Namespace) -> int:
     from app.services.bin_list import read_bin_list
 
     list_path = Path(args.list).expanduser() if args.list else _resolve_bin_list()
-    report = read_bin_list(list_path)
+    report = read_bin_list(list_path, pad_short_bins=args.pad_short_bins)
     print(f"{list_path}")
-    _print_table(
-        [
-            ("Columns used", ", ".join(report.columns)),
-            ("Rows accepted", f"{report.accepted:,}"),
-            ("BINs", f"{report.distinct_bins:,}"),
-            ("BINs with several entries", f"{report.shared_bins:,}"),
-            ("Duplicates superseded", f"{report.duplicates:,}"),
-            ("Rows skipped", f"{report.rejected:,}"),
-        ]
-    )
+    rows = [
+        ("Files read", ", ".join(source.name for source in report.sources)),
+        ("Columns used", ", ".join(report.columns)),
+    ]
+    if report.ignored_columns:
+        rows.append(("Columns ignored", ", ".join(report.ignored_columns)))
+    rows += [
+        ("Rows accepted", f"{report.accepted:,}"),
+        ("BINs", f"{report.distinct_bins:,}"),
+        ("BINs with several entries", f"{report.shared_bins:,}"),
+        ("Rows with no named bank", f"{report.unnamed_issuers:,}"),
+        ("Duplicates superseded", f"{report.duplicates:,}"),
+        ("Rows skipped", f"{report.rejected:,}"),
+    ]
+    if report.short_bins:
+        rows.append(
+            (
+                "BINs under 6 digits",
+                f"{report.short_bins:,} "
+                + (
+                    f"({report.padded_bins:,} zero-padded)"
+                    if report.padded_bins
+                    else "(skipped — pass --pad-short-bins to keep them)"
+                ),
+            )
+        )
+    if report.damaged_values:
+        rows.append(
+            (
+                "Values a spreadsheet destroyed",
+                f"{report.damaged_values:,} dropped (scientific notation)",
+            )
+        )
+    _print_table(rows)
     if report.problems:
         print()
         for problem in report.problems:
@@ -839,6 +871,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="build even when the list holds far fewer BINs than the current database",
     )
+    reb.add_argument(
+        "--pad-short-bins",
+        dest="pad_short_bins",
+        action="store_true",
+        help=PAD_SHORT_HELP,
+    )
     reb.set_defaults(func=cmd_rebuild)
 
     rbk = add("rollback", "restore the database the last rebuild replaced")
@@ -848,6 +886,12 @@ def build_parser() -> argparse.ArgumentParser:
     chk.add_argument("--list", help=f"path to the list (default: data/{BIN_LIST_FILENAME})")
     chk.add_argument(
         "--strict", action="store_true", help="exit non-zero if any row was skipped"
+    )
+    chk.add_argument(
+        "--pad-short-bins",
+        dest="pad_short_bins",
+        action="store_true",
+        help=PAD_SHORT_HELP,
     )
     chk.set_defaults(func=cmd_check_list)
 

@@ -295,6 +295,19 @@ def _to_v2(engine: Engine) -> None:
         )
 
 
+@register(3, "the card product tier as its own column")
+def _to_v3(engine: Engine) -> None:
+    """Give a BIN somewhere to keep its product tier.
+
+    Every real BIN list seen so far carries one — ``GOLD``, ``PLATINUM``,
+    ``WORLD``, ``PREPAID CLASSIC`` — and until now it had nowhere to go but
+    the brand, where it was indistinguishable from the scheme name. Older
+    packages simply have the column empty, which is the truthful state: they
+    never recorded a tier, so none is claimed for them.
+    """
+    _add_column(engine, "bins", "card_level", "VARCHAR(48)")
+
+
 def ensure_optional_tables(engine: Engine) -> list[str]:
     """Create tables this build expects but an older package may not carry.
 

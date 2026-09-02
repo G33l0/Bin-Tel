@@ -375,3 +375,23 @@ def test_a_rebuild_is_idempotent(tmp_path):
     assert first.enrichment.countries_propagated == second.enrichment.countries_propagated
     assert first.distinct_bins == second.distinct_bins
     manager.close()
+
+
+def test_jcbs_legacy_allocations_stop_1800_reading_as_uatp():
+    """JCB issued under 1800 and 2131 before moving to 35xx.
+
+    Both sit inside major industry identifier 1, which UATP also publishes.
+    Two schemes claim the prefix, so the honest answer is that the digits do
+    not settle it — not the one scheme that happened to be listed first.
+    """
+    from app.normalizers.iin_ranges import network_for_prefix
+
+    contested = network_for_prefix("180000")
+    assert contested.is_ambiguous
+    assert set(contested.candidates) == {"jcb", "uatp"}
+    assert contested.network is None
+
+    # 2131 is JCB's alone: Mastercard's 2-series starts at 2221.
+    assert network_for_prefix("213100").network == "jcb"
+    # And an ordinary airline prefix is still UATP's.
+    assert network_for_prefix("111100").network == "uatp"

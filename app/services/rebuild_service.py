@@ -159,12 +159,18 @@ class RebuildService:
         version: str | None = None,
         progress: Callable[[str], None] | None = None,
         allow_shrink: bool = False,
+        pad_short_bins: bool = False,
     ) -> RebuildOutcome:
         """Build a database from the list and make it the active one.
 
         Raises before touching the live database when the list cannot be read,
         when the staged database fails verification, or when the rebuild would
         drop most of the records and *allow_shrink* was not asked for.
+
+        ``pad_short_bins`` is for a list that has been through a spreadsheet
+        and come back with its leading zeros stripped. It is off by default
+        because ``42410`` and ``042410`` are different BINs and the file alone
+        cannot say which was meant.
         """
         started = datetime.now(UTC)
 
@@ -173,7 +179,7 @@ class RebuildService:
                 progress(message)
 
         emit("Reading the BIN list…")
-        report = read_bin_list(list_path)
+        report = read_bin_list(list_path, pad_short_bins=pad_short_bins)
 
         previous_count = self._current_record_count()
         if (

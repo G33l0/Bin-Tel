@@ -87,10 +87,11 @@ def test_only_bin_and_bank_are_required(tmp_path):
 
 
 def test_a_missing_required_column_stops_the_read(tmp_path):
-    path = write_list(tmp_path, "410000,visa\n", header="bin,network")
+    """The BIN is the one column nothing can stand in for."""
+    path = write_list(tmp_path, "Cascade Bank,visa\n", header="bank,network")
     with pytest.raises(ImportError_) as excinfo:
         read_bin_list(path)
-    assert "bank" in (excinfo.value.detail or "")
+    assert "bin" in (excinfo.value.detail or "")
 
 
 def test_an_unknown_column_stops_the_read_rather_than_being_guessed_at(tmp_path):
@@ -176,10 +177,18 @@ def test_one_bad_row_never_costs_the_rest_of_the_list(tmp_path):
     assert report.problems[0].line == 3
 
 
-def test_a_row_naming_no_institution_is_skipped(tmp_path):
+def test_a_row_naming_no_institution_is_kept_with_the_issuer_unknown(tmp_path):
+    """Losing the row would answer "not found" to a BIN the list contains.
+
+    A scheme and a country are real facts about a BIN. Discarding them because
+    the bank is unknown trades a partial answer for a wrong one.
+    """
     path = write_list(tmp_path, "410000,,US,visa,credit\n")
-    with pytest.raises(ImportError_):
-        read_bin_list(path)
+    report = read_bin_list(path)
+    assert report.accepted == 1
+    assert report.unnamed_issuers == 1
+    assert report.records[0].issuer is None
+    assert report.records[0].country == "US"
 
 
 def test_restating_the_same_fact_is_a_correction_and_the_later_row_wins(tmp_path):
@@ -279,3 +288,179 @@ def test_every_known_column_resolves(tmp_path):
     header = list(KNOWN_COLUMNS)
     resolved = resolve_columns(header)
     assert set(resolved.values()) == set(header)
+
+
+# ---------------------------------------------------------------------------
+# Real lists: several vocabularies, several files, spreadsheet damage
+#
+# The shapes below are the shapes three real datasets actually arrived in.
+# Every BIN and institution is synthetic; only the column names are real.
+# ---------------------------------------------------------------------------
+
+
+def write_named(tmp_path, name: str, text: str):
+    path = tmp_path / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_a_tab_separated_file_is_read(tmp_path):
+    path = write_named(
+        tmp_path, "bin-list.csv", "bin\tbank\tcountry\n410000\tCascade Bank\tUS\n"
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 1
+    assert report.records[0].issuer == "Cascade Bank"
+
+
+def test_a_french_header_is_understood(tmp_path):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "BIN\tPays\tEmetteur\tMarque\tType\tNiveau\n"
+        "410000\tFRANCE\tCascade Bank\tVISA\tDEBIT\tGOLD\n",
+    )
+    record = read_bin_list(path).records[0]
+    assert record.issuer == "Cascade Bank"
+    assert record.network == "VISA"
+    assert record.card_type == "DEBIT"
+    assert record.card_level == "GOLD"
+    assert record.country == "FRANCE"
+
+
+def test_the_country_code_beats_the_country_name(tmp_path):
+    """A file may spell one country three ways. The code is the least ambiguous."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin\tissuer\tisoCode2\tisoCode3\tCountryName\n"
+        "410000\tCascade Bank\tUS\tUSA\tUNITED STATES\n",
+    )
+    assert read_bin_list(path).records[0].country == "US"
+
+
+def test_coordinates_are_recognised_and_never_stored(tmp_path):
+    """These hold the country's centroid, not the bank's address."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin,issuer,latitude,longitude\n410000,Cascade Bank,37.0902,-95.7129\n",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 1
+    assert "latitude" in report.ignored_columns
+    assert "longitude" in report.ignored_columns
+    assert not hasattr(report.records[0], "latitude")
+
+
+def test_a_short_bin_is_refused_unless_padding_is_asked_for(tmp_path):
+    """42410 and 042410 are different BINs; the file alone cannot say which."""
+    body = "bin,bank\n42410,Cascade Bank\n410000,Meridian Trust\n"
+    path = write_named(tmp_path, "bin-list.csv", body)
+
+    strict = read_bin_list(path)
+    assert strict.accepted == 1
+    assert strict.short_bins == 1
+    assert strict.padded_bins == 0
+    assert "042410" in strict.problems[0].reason
+
+    padded = read_bin_list(path, pad_short_bins=True)
+    assert padded.accepted == 2
+    assert padded.padded_bins == 1
+    assert {record.bin for record in padded.records} == {"042410", "410000"}
+
+
+def test_a_bin_a_spreadsheet_turned_into_a_float_is_refused(tmp_path):
+    path = write_named(
+        tmp_path, "bin-list.csv", "bin,bank\n4.1E+05,Cascade Bank\n410000,Meridian\n"
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 1
+    assert "scientific notation" in report.problems[0].reason
+
+
+def test_a_phone_a_spreadsheet_destroyed_is_dropped_but_the_row_is_kept(tmp_path):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin,bank,phone\n410000,Cascade Bank,5.51732E+11\n",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 1
+    assert report.damaged_values == 1
+    assert report.records[0].phone is None
+    assert report.records[0].issuer == "Cascade Bank"
+
+
+def test_several_lists_can_live_in_one_file(tmp_path):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin,bank\n410000,Cascade Bank\n"
+        "\n"
+        "BIN\tEmetteur\tMarque\n530001\tMeridian Trust\tMASTERCARD\n",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 2
+    assert {record.bin for record in report.records} == {"410000", "530001"}
+
+
+def test_a_dataset_dropped_beside_the_list_is_read_too(tmp_path):
+    main = write_named(tmp_path, "bin-list.csv", "bin,bank\n410000,Cascade Bank\n")
+    write_named(
+        tmp_path,
+        "bin-lists/extra.tsv",
+        "BIN\tIssuer\tBrand\n530001\tMeridian Trust\tMASTERCARD\n",
+    )
+    report = read_bin_list(main)
+    assert report.accepted == 2
+    assert [source.name for source in report.sources] == ["bin-list.csv", "extra.tsv"]
+
+
+def test_a_scheme_in_a_column_called_brand_still_names_the_scheme(tmp_path):
+    path = write_named(
+        tmp_path, "bin-list.csv", "bin,issuer,brand\n410000,Cascade Bank,VISA\n"
+    )
+    record = read_bin_list(path).records[0]
+    assert record.brand == "VISA"
+    assert record.network == "VISA"
+
+
+def test_a_prepaid_tier_says_the_card_is_prepaid(tmp_path):
+    """The row's own words, not an inference from anything outside it."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin,issuer,card_type,category\n"
+        "410000,Cascade Bank,DEBIT,PREPAID GOLD\n"
+        "410001,Cascade Bank,DEBIT,GOLD\n",
+    )
+    prepaid, plain = read_bin_list(path).records
+    assert prepaid.card_level == "PREPAID GOLD"
+    assert prepaid.prepaid is True
+    assert plain.prepaid is None
+
+
+def test_a_mistyped_header_names_the_column_it_did_not_understand(tmp_path):
+    """Worth keeping apart from a bad row: one is a typo, the other is a file."""
+    path = write_named(
+        tmp_path, "bin-list.csv", "bin,bank,contry\n410000,Cascade Bank,US\n"
+    )
+    with pytest.raises(ImportError_) as excinfo:
+        read_bin_list(path)
+    assert "contry" in (excinfo.value.detail or "")
+
+
+def test_a_bad_bin_is_one_skipped_row_not_the_end_of_the_file(tmp_path):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "bin,bank,country\n"
+        "410000,Cascade Bank,US\n"
+        "not-a-bin,Nobody,US\n"
+        "530001,Meridian Trust,GB\n",
+    )
+    report = read_bin_list(path)
+    assert report.accepted == 2
+    assert report.rejected == 1
