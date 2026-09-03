@@ -584,3 +584,44 @@ def test_a_declared_column_is_still_kept_in_full(tmp_path):
     )
     record = read_bin_list(path).records[0]
     assert record.source_row["Pays"] == "AFGHANISTAN"
+
+
+def test_a_file_can_declare_how_far_it_is_trusted(tmp_path):
+    """Which source you trust is knowledge you have; the system lacked it."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "# bintel: confidence = 0.5\nbin,bank\n410000,Cascade Bank\n",
+    )
+    assert read_bin_list(path).records[0].confidence == 0.5
+
+
+def test_a_file_that_says_nothing_is_trusted_as_before(tmp_path):
+    path = write_named(tmp_path, "bin-list.csv", "bin,bank\n410000,Cascade Bank\n")
+    assert read_bin_list(path).records[0].confidence == 0.9
+
+
+def test_settings_can_live_beside_a_file_that_must_not_be_edited(tmp_path):
+    """A redistributed dataset stays byte-for-byte as published."""
+    main = write_named(tmp_path, "bin-list.csv", "bin,bank\n410000,Cascade Bank\n")
+    dataset = write_named(
+        tmp_path, "bin-lists/public.csv", "bin,issuer\n530001,Meridian Trust\n"
+    )
+    write_named(tmp_path, "bin-lists/public.csv.bintel", "# bintel: confidence = 0.4\n")
+
+    report = read_bin_list(main)
+    by_bin = {record.bin: record.confidence for record in report.records}
+    assert by_bin == {"410000": 0.9, "530001": 0.4}
+    # The dataset itself was never touched.
+    assert dataset.read_text(encoding="utf-8") == "bin,issuer\n530001,Meridian Trust\n"
+
+
+@pytest.mark.parametrize("declared", ["nonsense", "1.5", "0", "-0.2"])
+def test_an_unusable_confidence_is_refused(tmp_path, declared):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        f"# bintel: confidence = {declared}\nbin,bank\n410000,Cascade Bank\n",
+    )
+    with pytest.raises(ImportError_):
+        read_bin_list(path)

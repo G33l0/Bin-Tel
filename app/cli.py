@@ -825,6 +825,16 @@ def cmd_lookup(args: argparse.Namespace) -> int:
     else:
         print("\nNo institution relationship is recorded for this prefix.")
 
+    if record.has_shared_issuance:
+        # The desktop card says this plainly; the CLI used to print a bare
+        # "High (90%)" beneath two mutually exclusive names, which reads as
+        # certainty about an answer that has not been settled.
+        names = ", ".join(item.display_name for item in record.current_issuers)
+        print(
+            f"\n{len(record.current_issuers)} institutions are recorded as currently "
+            f"using this BIN: {names}."
+        )
+        print("All of them are shown, and none has been chosen over the others.")
     print(f"\nConfidence: {result.confidence_level.capitalize()} ({result.confidence_percent}%)")
     for reason in result.confidence_reasons:
         print(f"  · {reason}")

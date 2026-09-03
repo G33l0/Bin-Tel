@@ -254,6 +254,23 @@ COLUMN_ALIASES: dict[str, str] = {
 #: an unknown target is an error like any other unrecognised column.
 _DIRECTIVE = re.compile(r"^#\s*bintel\s*:\s*(?P<source>[^=]+?)\s*=\s*(?P<target>\S+)\s*$", re.I)
 
+#: Directive names that configure the *file* rather than rename a column.
+RESERVED_DIRECTIVES: frozenset[str] = frozenset({"confidence"})
+
+#: How much a list is trusted when it does not say.
+#:
+#: A hand-maintained list is specific and deliberate, so it outranks a bulk
+#: feed — but it is never asserted as verified.
+DEFAULT_CONFIDENCE = 0.9
+
+#: A file that must not be edited can be annotated beside it instead.
+#:
+#: A redistributed dataset should stay byte-for-byte as published: a diff
+#: against upstream is how anyone checks it was not tampered with, and CC BY
+#: asks that modifications be declared. So directives for ``binlist-data.csv``
+#: go in ``binlist-data.csv.bintel`` and the data file is left alone.
+SIDECAR_SUFFIX = ".bintel"
+
 #: A BIN is 6 to 8 digits. Six is the historic length, eight the current one;
 #: both are first-class here, and neither is derived from the other.
 _BIN_PATTERN = re.compile(r"^\d{6,8}$")
@@ -477,9 +494,7 @@ def resolve_columns(
             continue
         # A `# bintel:` line in the file beats the alias table, because the
         # file knows what its own columns mean and the alias table cannot.
-        declared = overrides.get(name) or overrides.get(
-            canonical_column(raw.strip())
-        )
+        declared = None if name in RESERVED_DIRECTIVES else overrides.get(name)
         if declared:
             if declared not in KNOWN_COLUMNS:
                 raise ImportError_(
@@ -608,6 +623,48 @@ def normalise_bin(value: str, *, pad_short: bool = False) -> str:
     return digits
 
 
+def read_sidecar(path: Path, *, encoding: str = "utf-8") -> dict[str, str]:
+    """Directives held beside a file that should not itself be edited."""
+    sidecar = path.with_name(path.name + SIDECAR_SUFFIX)
+    if not sidecar.is_file():
+        return {}
+    directives: dict[str, str] = {}
+    try:
+        for raw in sidecar.read_text(encoding=encoding, errors="replace").splitlines():
+            match = _DIRECTIVE.match(raw.strip())
+            if match:
+                directives[canonical_column(match["source"])] = match["target"].strip().lower()
+    except OSError as exc:  # pragma: no cover - unreadable sidecar
+        raise ImportError_(
+            f"The settings beside {path.name} could not be read.", detail=str(exc)
+        ) from exc
+    return directives
+
+
+def file_confidence(directives: dict[str, str], source: Path) -> float:
+    """How far this file says it should be trusted."""
+    declared = directives.get("confidence")
+    if declared is None:
+        return DEFAULT_CONFIDENCE
+    try:
+        value = float(declared)
+    except ValueError:
+        raise ImportError_(
+            f"{source.name} declares a confidence that is not a number.",
+            detail=f"`# bintel: confidence = {declared}` — expected 0 to 1.",
+        ) from None
+    if not 0.0 < value <= 1.0:
+        raise ImportError_(
+            f"{source.name} declares a confidence outside 0 to 1.",
+            detail=(
+                f"`# bintel: confidence = {declared}`. Nothing is ever certain "
+                "enough for 1.0 to be automatic, and 0 would be a reason not to "
+                "read the file at all."
+            ),
+        )
+    return value
+
+
 def _resplit(cells: list[str]) -> list[str]:
     """Re-split a row that the file's delimiter did not divide.
 
@@ -662,6 +719,7 @@ def _row_record(
     source_row: dict[str, str] | None = None,
     source_file: str | None = None,
     source_line: int | None = None,
+    confidence: float = DEFAULT_CONFIDENCE,
 ) -> RawBinRecord:
     """Turn one resolved row into a record, or raise ``ValueError``."""
     raw_bin = values.get("bin", "")
@@ -722,9 +780,10 @@ def _row_record(
         except ValueError as exc:
             raise ValueError(f"the range end is unusable — {exc}") from exc
 
-    # The list is hand-maintained and specific, so it is trusted more than a
-    # bulk third-party feed, but never asserted as verified.
-    fields["confidence"] = 0.9
+    # How far this file is trusted, which the file itself may lower. Where two
+    # sources disagree the more trusted one is presented and the other kept as
+    # the dissent, rather than both being shown as equals when they are not.
+    fields["confidence"] = confidence
     # The row travels with the record under its own headers. The curated
     # fields above are an interpretation of it and are narrower on purpose;
     # narrower must not mean that the rest is thrown away.
@@ -813,7 +872,9 @@ def _read_one(
     label = path.name
     found_header = False
 
-    directives: dict[str, str] = {}
+    # The sidecar first, so a line inside the file can still override it.
+    directives: dict[str, str] = read_sidecar(path, encoding=encoding)
+    confidence = file_confidence(directives, path)
     for line, raw_cells in iter_rows(path, encoding=encoding, directives=directives):
         cells = _resplit(raw_cells)
         if columns is None or starts_a_new_section(cells, columns, directives):
@@ -822,6 +883,7 @@ def _read_one(
             # an unrecognised column is raised rather than swallowed: a
             # mistyped header must not be mistaken for a missing one.
             columns = resolve_columns(cells, directives)
+            confidence = file_confidence(directives, path)
             headers = [(cell or "").strip() for cell in cells]
             found_header = True
             for name in sorted(set(columns.values())):
@@ -841,6 +903,7 @@ def _read_one(
                 source_row=_original_row(cells, headers),
                 source_file=label,
                 source_line=line,
+                confidence=confidence,
             )
         except ValueError as exc:
             raw = (values.get("bin") or "").strip()

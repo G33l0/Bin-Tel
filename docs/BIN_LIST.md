@@ -98,6 +98,27 @@ recognised and deliberately never stored: Bin-Tel describes issuance and
 ownership, and acceptance is closer to routing, which it makes no claim about.
 The value is still kept in full — `python -m app.cli origin <bin>` shows it.
 
+**A file can say how far it should be trusted.** Which source you trust more
+is knowledge you have and the reader lacked — so a hand-curated list and a
+public dump archived in 2020 both carried the same weight, and where they
+disagreed the answer came down to whichever was read first.
+
+```
+# bintel: confidence = 0.5
+```
+
+Between 0 and 1, defaulting to 0.9. Where two sources disagree the more
+trusted one is the answer and the other is kept as the dissent, rather than
+both being presented as equals when they are not. It never settles a
+disagreement invisibly: a BIN that two sources attribute to different banks
+still names both and says so.
+
+**Settings for a file you must not edit.** A redistributed dataset should stay
+byte-for-byte as published — a diff against upstream is how anyone checks it
+was not tampered with, and CC BY asks that modifications be declared. So put
+its directives in a sidecar named after it, `binlist-data.csv.bintel`, and
+leave the data file alone.
+
 **Notices beside a dataset.** A redistributed dataset arrives with the licence
 it is redistributed under, and a licence is very often a `.txt` — which is also
 a perfectly good format for a list. Files named `LICENSE`, `README`, `NOTICE`,
