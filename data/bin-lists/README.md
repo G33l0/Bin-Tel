@@ -15,32 +15,40 @@ Adding a dataset is dropping a file in. Removing one is deleting the file.
 
 ## What is here
 
-Three samples, ~20–30 rows each, of a personally compiled BIN dataset. They
-are here so the repository has something real to build and test against; the
-full files replace them in place, keeping the same names or taking new ones.
+| File | Rows | What it is |
+|---|---|---|
+| `binlist-data.csv` | 343,063 | A public dataset, CC BY 4.0 — see `ATTRIBUTION.md` |
+| `sample-a-issuer-contacts.tsv` | 20 | Sample of a personally compiled list |
+| `sample-b-by-country.tsv` | 20 | Sample of the same, French headers |
 
-| File | Shape |
-|---|---|
-| `sample-a-issuer-contacts.tsv` | `BIN Brand Type Category Issuer IssuerPhone IssuerUrl isoCode2 isoCode3 CountryName` |
-| `sample-b-by-country.tsv` | `BIN Pays Emetteur Marque Type Niveau` — French headers, grouped by country |
-| `sample-c-coordinates.tsv` | `bin brand type category issuer alpha_2 alpha_3 country latitude longitude bank_phone` |
+The two samples are placeholders so the repository has something small to test
+against; the full files replace them in place.
 
-All three are tab-separated. All three parse without conversion.
+Three different column vocabularies, two different delimiters, no conversion
+needed. BIN prefixes, issuer names, schemes and countries only. No card
+numbers, no cardholder data — the reader refuses anything longer than eight
+digits.
 
-BIN prefixes, issuer names, schemes and countries only. No card numbers, no
-cardholder data — the reader refuses anything longer than eight digits.
+`sample-c-coordinates.tsv` used to be here and is gone: it turned out to be a
+30-row slice of `binlist-data.csv`, byte-identical, so keeping both would have
+restated the same thirty facts.
 
 ---
 
 ## These files have been through a spreadsheet
 
-**A and C need `--pad-short-bins`. B does not** — it is clean six-digit
-throughout, and the flag is harmless to it.
+**`binlist-data.csv` and `sample-a` need `--pad-short-bins`. `sample-b` does
+not** — it is clean six-digit throughout, and the flag is harmless to it.
 
-Excel read the BIN column as a number and dropped the leading zeros, one zero
-from the five-digit values and two from the four-digit ones. It also turned one
-phone number into `5.51732E+11`, which is how we know the file passed through a
-spreadsheet at all. That value is dropped on read; its digits are gone.
+The damage is *upstream*, in the dataset as published, not something that
+happened here. Across all 343,063 rows of `binlist-data.csv`:
+
+* **not one BIN begins with `0`**, while 7 are five digits long;
+* **57 phone numbers are rendered in scientific notation** (`9.67E+11`).
+
+The second is proof the file passed through a spreadsheet during its
+compilation; the first is what that spreadsheet did to the BIN column. Those
+phone numbers are unrecoverable and are dropped on read.
 
 Padding restores a BIN to a length something is actually assigned at — four and
 five digits become six, seven becomes eight. **It cannot restore an eight-digit
@@ -49,16 +57,20 @@ from a genuine six-digit BIN.
 
 So these files are recoverable, not clean. If a source can be re-exported with
 the BIN column formatted as **Text**, that export is better than the padded
-read of this one, and should replace it.
+read of this one, and should replace it. For `binlist-data.csv` that is not
+possible: the repository is archived, so the published file is as good as it
+gets, and 7 affected rows in 343,063 is the scale of it.
 
 ## Two things the data says that are worth knowing
 
-**`Pays` in B is the country of issuance, not the bank's home.** Cards issued
-in Afghanistan by Bank Alfalah (Pakistani) and CSCBank SAL (a Lebanese
+**`Pays` in sample-b is the country of issuance, not the bank's home.** Cards
+issued in Afghanistan by Bank Alfalah (Pakistani) and CSCBank SAL (a Lebanese
 processor) are filed under Afghanistan. That is probably right for the cards
 and definitely not a claim about where those institutions are registered.
 
-**`latitude`/`longitude` in C are country centroids.** `37.0902, -95.7129` is
-the geographic centre of the United States, repeated on every US row. The
-columns are recognised so the file loads and deliberately never stored: a
-country centroid is not a bank's address.
+**`latitude`/`longitude` in `binlist-data.csv` are country centroids.**
+`37.0902, -95.7129` is the geographic centre of the United States, repeated on
+every US row. The columns are recognised so the file loads and deliberately
+never stored as an address: a country centroid is not a bank's location. The
+values are still kept verbatim in the source-row archive — `python -m app.cli
+origin <bin>` shows them.

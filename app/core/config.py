@@ -147,6 +147,12 @@ class DatabaseSettings(_Section):
     #: application's own data folder, which is writable on every platform —
     #: unlike anything beside a packaged executable.
     bin_list_path: str = ""
+    #: Whether a BIN shorter than six digits is treated as one a spreadsheet
+    #: stripped the leading zeros from. Off by default, because 42410 and
+    #: 042410 are different BINs; remembered once set, because a list that
+    #: needed it last rebuild needs it every rebuild, and re-deciding it each
+    #: time is how a database ends up built two different ways.
+    pad_short_bins: bool = False
     manifest_url: str = DEFAULT_MANIFEST_URL
     automatic_updates: bool = True
     update_frequency: UpdateFrequency = UpdateFrequency.WEEKLY

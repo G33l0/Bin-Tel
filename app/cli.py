@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,13 @@ if __package__ in (None, ""):  # pragma: no cover - direct-script execution
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.core.config import ConfigManager
-from app.core.constants import APP_NAME, APP_VERSION, SCHEMA_VERSION, UNKNOWN_DISPLAY
+from app.core.constants import (
+    APP_NAME,
+    APP_VERSION,
+    DATA_DIR_ENV_VAR,
+    SCHEMA_VERSION,
+    UNKNOWN_DISPLAY,
+)
 from app.core.errors import BinTelError
 from app.core.logging_config import get_logger, setup_logging
 from app.core.paths import get_paths, reset_paths_cache
@@ -264,6 +271,20 @@ def _refresh_record_count(manager: DatabaseManager) -> None:
         write_metadata(session, {DatabaseMetadata.RECORD_COUNT: count})
 
 
+def _pad_short_bins(args: argparse.Namespace) -> bool:
+    """The flag if given, otherwise whatever was chosen last time.
+
+    Rebuild and check-list have to agree on this: checking a list under one
+    reading and building it under another reports a clean file and then
+    produces a different database.
+    """
+    if getattr(args, "pad_short_bins", False):
+        return True
+    config = ConfigManager(get_paths())
+    config.load()
+    return config.settings.database.pad_short_bins
+
+
 def cmd_rebuild(args: argparse.Namespace) -> int:
     """Rebuild the whole database from the personal BIN list."""
     from app.services.rebuild_service import RebuildService
@@ -282,7 +303,7 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
             version=args.db_version,
             progress=lambda message: print(f"  {message}"),
             allow_shrink=args.allow_shrink,
-            pad_short_bins=args.pad_short_bins,
+            pad_short_bins=_pad_short_bins(args),
         )
     finally:
         manager.close()
@@ -338,7 +359,7 @@ def cmd_check_list(args: argparse.Namespace) -> int:
     from app.services.bin_list import read_bin_list
 
     list_path = Path(args.list).expanduser() if args.list else _resolve_bin_list()
-    report = read_bin_list(list_path, pad_short_bins=args.pad_short_bins)
+    report = read_bin_list(list_path, pad_short_bins=_pad_short_bins(args))
     print(f"{list_path}")
     rows = [
         ("Files read", ", ".join(source.name for source in report.sources)),
@@ -972,14 +993,53 @@ def cmd_version(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 
 
+#: What the shared options fall back to when given in neither position.
+#:
+#: Applied after parsing rather than with ``parser.set_defaults``, which would
+#: undo the whole fix: ``set_defaults`` reaches into every matching action and
+#: overwrites ``action.default`` — and ``parents=`` shares one action object
+#: between the top-level parser and every subparser, so setting a default there
+#: replaces the SUPPRESS on all of them at once.
+GLOBAL_DEFAULTS = {"database": None, "data_dir": None, "log_level": "WARNING"}
+
+
+def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse the command line, filling in options neither position supplied."""
+    args = build_parser().parse_args(argv)
+    for name, fallback in GLOBAL_DEFAULTS.items():
+        if not hasattr(args, name):
+            setattr(args, name, fallback)
+    return args
+
+
 def _global_options() -> argparse.ArgumentParser:
-    """Options accepted both before and after the subcommand."""
+    """Options accepted both before and after the subcommand.
+
+    ``SUPPRESS`` is what makes "both" true. This parser is a parent of the
+    top-level parser *and* of every subparser, so an ordinary default would be
+    written twice: the subparser would parse second and overwrite a value the
+    top-level had already taken from the command line. ``--data-dir X rebuild``
+    then silently built into the default directory instead of X — the option
+    was accepted, echoed in --help, and ignored.
+
+    With SUPPRESS the subparser writes nothing when the option is absent, so
+    whichever position supplied it wins, and :data:`GLOBAL_DEFAULTS` fills in
+    when neither did.
+    """
     shared = argparse.ArgumentParser(add_help=False)
-    shared.add_argument("--database", help="path to a specific database file")
-    shared.add_argument("--data-dir", help="use a specific application-data directory")
+    shared.add_argument(
+        "--database",
+        default=argparse.SUPPRESS,
+        help="path to a specific database file",
+    )
+    shared.add_argument(
+        "--data-dir",
+        default=argparse.SUPPRESS,
+        help="use a specific application-data directory",
+    )
     shared.add_argument(
         "--log-level",
-        default="WARNING",
+        default=argparse.SUPPRESS,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
     )
     return shared
@@ -1170,8 +1230,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parse_arguments(argv)
+    # Resolve the data directory before anything caches it: get_paths() is a
+    # process-wide singleton and setup_logging would otherwise pin the default
+    # location a moment before --data-dir got a chance to change it.
+    if args.data_dir:
+        os.environ[DATA_DIR_ENV_VAR] = str(Path(args.data_dir).expanduser())
+        reset_paths_cache()
     setup_logging(args.log_level, get_paths(), console=True)
     try:
         return int(args.func(args))

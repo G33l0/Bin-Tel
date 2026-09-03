@@ -488,3 +488,41 @@ def test_a_seven_digit_value_is_untouched_without_padding(tmp_path):
     report = read_bin_list(path)
     assert report.records[0].bin == "4141234"
     assert report.padded_bins == 0
+
+
+def test_a_licence_beside_a_dataset_is_not_read_as_one(tmp_path):
+    """A redistributed dataset arrives with its notices. They are not lists.
+
+    Guessing by content would mean silently skipping a real list whose header
+    had a typo, so the exclusion is by name — and it has to survive the way
+    licences are actually named beside the file they cover.
+    """
+    main = write_named(tmp_path, "bin-list.csv", "bin,bank\n410000,Cascade Bank\n")
+    write_named(
+        tmp_path,
+        "bin-lists/dataset.csv",
+        "bin,issuer\n530001,Meridian Trust\n",
+    )
+    for name in (
+        "LICENSE.txt",
+        "dataset.LICENSE.txt",
+        "README.txt",
+        "ATTRIBUTION.txt",
+        "NOTICE.txt",
+    ):
+        write_named(tmp_path, f"bin-lists/{name}", "Attribution 4.0 International\n\nText.\n")
+
+    report = read_bin_list(main)
+    assert [source.name for source in report.sources] == ["bin-list.csv", "dataset.csv"]
+    assert report.accepted == 2
+
+
+def test_a_list_whose_name_merely_contains_a_notice_word_is_still_read(tmp_path):
+    """`licenses-by-bank.csv` is a list; the match is on whole name parts."""
+    main = write_named(tmp_path, "bin-list.csv", "bin,bank\n410000,Cascade Bank\n")
+    write_named(
+        tmp_path, "bin-lists/licenses-by-bank.csv", "bin,issuer\n530001,Meridian\n"
+    )
+    report = read_bin_list(main)
+    assert "licenses-by-bank.csv" in [source.name for source in report.sources]
+    assert report.accepted == 2

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -255,3 +256,36 @@ def test_learn_says_why_nothing_external_was_consulted(tmp_path, capsys, monkeyp
     assert "learning is off" in output
     assert "410000" in output
     reset_paths_cache()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--data-dir", "PLACEHOLDER", "check-list"],
+        ["check-list", "--data-dir", "PLACEHOLDER"],
+    ],
+)
+def test_the_data_directory_is_honoured_in_either_position(argv, tmp_path, capsys):
+    """It used to be accepted, echoed in --help, and silently ignored.
+
+    The shared options are a parent parser of both the top-level parser and
+    every subparser, so a value taken before the subcommand was overwritten by
+    the subparser's own default a moment later — and the command then built
+    into the default directory instead of the one asked for.
+    """
+    from app.cli import main
+    from app.core.paths import reset_paths_cache
+
+    listing = tmp_path / "bin-list.csv"
+    listing.write_text("bin,bank\n410000,Cascade Bank\n", encoding="utf-8")
+    resolved = [str(tmp_path) if part == "PLACEHOLDER" else part for part in argv]
+
+    try:
+        assert main([*resolved, "--list", str(listing)]) == 0
+        out = capsys.readouterr().out
+        assert "1" in out
+        # The data directory it was told to use is the one it prepared.
+        assert (tmp_path / "database").is_dir()
+    finally:
+        os.environ.pop("BINTEL_DATA_DIR", None)
+        reset_paths_cache()

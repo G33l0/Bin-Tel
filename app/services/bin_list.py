@@ -72,6 +72,31 @@ EXTRA_LIST_DIRNAME = "bin-lists"
 #: Extensions treated as list files in that folder.
 LIST_SUFFIXES: tuple[str, ...] = (".csv", ".tsv", ".txt")
 
+#: Filenames in that folder that are documentation, not data.
+#:
+#: A dataset arrives with the notices it is redistributed under, and a licence
+#: is very often a ``.txt`` — which is also a perfectly good format for a list.
+#: Guessing by content would mean silently skipping a real list that had a typo
+#: in its header, so the exclusion is by name and is written down here. Matched
+#: against each dot-separated part of the filename, so ``foo.LICENSE.txt`` is
+#: recognised as well as ``LICENSE.txt``.
+NON_DATA_NAMES: frozenset[str] = frozenset(
+    {
+        "readme",
+        "license",
+        "licence",
+        "licenses",
+        "licences",
+        "notice",
+        "notices",
+        "attribution",
+        "copying",
+        "changelog",
+        "authors",
+        "contributing",
+    }
+)
+
 #: The one column a row cannot do without.
 #:
 #: The institution used to be required too. It is not any more: a row that
@@ -361,22 +386,28 @@ def default_bin_list_path() -> Path:
     return seed_bin_list(working)
 
 
+def is_data_file(item: Path) -> bool:
+    """Whether a file in the datasets folder is a list rather than a notice."""
+    if item.suffix.lower() not in LIST_SUFFIXES:
+        return False
+    parts = {part.casefold() for part in item.name.split(".")}
+    return not (parts & NON_DATA_NAMES)
+
+
 def list_sources(path: Path) -> list[Path]:
     """The main list, then every list file in the folder beside it.
 
     Keeping a dataset in its own file is better than merging it into another
     one's columns: the shapes stay separate, and removing a dataset is
-    deleting a file rather than editing thousands of lines out of one.
+    deleting a file rather than editing thousands of lines out of one. A
+    dataset also arrives with its licence and its notices, which live in the
+    same folder and are not lists — see :data:`NON_DATA_NAMES`.
     """
     sources = [path] if path.exists() else []
     folder = path.parent / EXTRA_LIST_DIRNAME
     if folder.is_dir():
         sources.extend(
-            sorted(
-                item
-                for item in folder.iterdir()
-                if item.is_file() and item.suffix.lower() in LIST_SUFFIXES
-            )
+            sorted(item for item in folder.iterdir() if item.is_file() and is_data_file(item))
         )
     return sources
 

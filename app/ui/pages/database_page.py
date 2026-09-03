@@ -152,7 +152,10 @@ class DatabasePage(BasePage):
             "spreadsheet. 42410 and 042410 are different BINs."
         )
         self.pad_short_bins.hide()
-        self.pad_short_bins.toggled.connect(lambda _: self.refresh_list_status())
+        self.pad_short_bins.setChecked(
+            self.context.config.settings.database.pad_short_bins
+        )
+        self.pad_short_bins.toggled.connect(self._save_pad_short_bins)
         source.body.addWidget(self.pad_short_bins)
 
         source_row = hbox(spacing=10)
@@ -402,6 +405,12 @@ class DatabasePage(BasePage):
         self.pad_short_bins.setVisible(bool(report.short_bins) or padding)
         self.list_status_label.setText(f"Ready to build — {report.summary}")
         self.buttons["rebuild"].setEnabled(True)
+
+    def _save_pad_short_bins(self, checked: bool) -> None:
+        """Remember the choice, then re-read the list under it."""
+        self.context.config.settings.database.pad_short_bins = checked
+        self.context.config.save_settings()
+        self.refresh_list_status()
 
     # -- learning ----------------------------------------------------------
     def _learning_service(self, session):

@@ -77,6 +77,15 @@ without reconciling their headers first. Each section may use its own
 delimiter. Keeping each dataset as its own file in `bin-lists/` is tidier, and
 both work.
 
+**Notices beside a dataset.** A redistributed dataset arrives with the licence
+it is redistributed under, and a licence is very often a `.txt` — which is also
+a perfectly good format for a list. Files named `LICENSE`, `README`, `NOTICE`,
+`ATTRIBUTION`, `COPYING`, `CHANGELOG`, `AUTHORS` or `CONTRIBUTING` are skipped,
+matched on whole dot-separated parts of the filename, so `dataset.LICENSE.txt`
+is skipped and `licenses-by-bank.csv` is not. The exclusion is by name rather
+than by content on purpose: guessing from what is inside would mean silently
+skipping a real list whose header had a typo.
+
 **One country, spelled three ways.** A file carrying `alpha_2`, `alpha_3` and
 `country` is describing one country. The two-letter code wins, then the
 three-letter code, then the name.
@@ -107,8 +116,8 @@ zeros from a numeric column, so this may be '042410' — rebuild with
 --pad-short-bins if you know that is what happened to this file
 ```
 
-`--pad-short-bins` left-pads them back to the length an assignment actually
-comes in — sixes and eights. Four and five digits become six; seven becomes
+`--pad-short-bins` (**Database → Rebuild**, or the checkbox, which remembers
+your answer) left-pads them back to the length an assignment actually comes in — sixes and eights. Four and five digits become six; seven becomes
 eight, because nothing is issued at seven digits, so a surviving seven is an
 eight that lost one zero.
 
