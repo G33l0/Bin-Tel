@@ -711,7 +711,7 @@ class IngestService:
             else:
                 result.unchanged += 1
 
-        self._record_claims(record, raw, values)
+        self._record_claims(record, raw, values, is_new=action == "created")
         self._archive_source_row(record, raw)
 
         if institution is not None:
@@ -729,6 +729,7 @@ class IngestService:
                 ),
                 effective_from=raw.effective_from,
                 effective_to=raw.effective_to,
+                bin_is_new=action == "created",
             )
         if parent is not None and (institution is None or parent.id != institution.id):
             self._link(
@@ -738,6 +739,7 @@ class IngestService:
                 raw.confidence * 0.9,
                 primary=False,
                 effective_from=raw.effective_from,
+                bin_is_new=action == "created",
             )
 
         if raw.bin_high:
@@ -824,8 +826,23 @@ class IngestService:
             )
         )
 
-    def _record_claims(self, record: Bin, raw: RawBinRecord, values: dict[str, Any]) -> None:
-        """Preserve lineage so a merge decision can always be re-examined."""
+    def _record_claims(
+        self,
+        record: Bin,
+        raw: RawBinRecord,
+        values: dict[str, Any],
+        *,
+        is_new: bool = False,
+    ) -> None:
+        """Preserve lineage so a merge decision can always be re-examined.
+
+        ``is_new`` says this BIN was inserted moments ago in this same run, in
+        which case nothing can already reference its id and the existence
+        probe below is provably pointless. It is not an optimisation that
+        trades correctness for speed: on a fresh build it removes one SELECT
+        per claim per row — five queries a row, each dragging an autoflush
+        behind it — and on a 343,000-row list that was most of the build.
+        """
         if self._source is None:
             return
         interesting = {
@@ -838,14 +855,18 @@ class IngestService:
         for field_name, value in interesting.items():
             if not value:
                 continue
-            exists = self._session.execute(
-                select(BinClaim.id).where(
-                    BinClaim.bin_id == record.id,
-                    BinClaim.source_id == self._source.id,
-                    BinClaim.field == field_name,
-                    BinClaim.value == str(value),
-                )
-            ).scalar()
+            exists = (
+                None
+                if is_new
+                else self._session.execute(
+                    select(BinClaim.id).where(
+                        BinClaim.bin_id == record.id,
+                        BinClaim.source_id == self._source.id,
+                        BinClaim.field == field_name,
+                        BinClaim.value == str(value),
+                    )
+                ).scalar()
+            )
             if exists is None:
                 self._session.add(
                     BinClaim(
@@ -880,14 +901,21 @@ class IngestService:
         is_current: bool = True,
         effective_from: datetime | None = None,
         effective_to: datetime | None = None,
+        bin_is_new: bool = False,
     ) -> None:
-        existing = self._session.execute(
-            select(BinInstitution).where(
-                BinInstitution.bin_id == record.id,
-                BinInstitution.institution_id == institution.id,
-                BinInstitution.relationship_type == relationship.value,
-            )
-        ).scalar_one_or_none()
+        # As in _record_claims: a BIN inserted moments ago has no links yet,
+        # so looking for one is a query that can only ever return nothing.
+        existing = (
+            None
+            if bin_is_new
+            else self._session.execute(
+                select(BinInstitution).where(
+                    BinInstitution.bin_id == record.id,
+                    BinInstitution.institution_id == institution.id,
+                    BinInstitution.relationship_type == relationship.value,
+                )
+            ).scalar_one_or_none()
+        )
         if existing is not None:
             existing.last_updated = datetime.now(UTC)
             return

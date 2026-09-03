@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from app.normalizers.confidence import (
@@ -73,6 +74,23 @@ class NameNormalizer:
     """Canonicalises institution names and scores candidate matches."""
 
     def normalize(self, value: str | None) -> NormalizedName:
+        """Canonical forms for one raw name.
+
+        Memoized because a real BIN list names the same handful of banks over
+        and over — 343,000 rows resolved to 12,405 institutions — and the
+        derivation underneath runs a few dozen regular expressions each time.
+        The result is a frozen dataclass of strings and tuples, so a cached one
+        cannot be mutated by whoever receives it.
+
+        The shared cache is keyed on the string alone, so it is used only by
+        the canonical normalizer. A subclass that changed the derivation would
+        otherwise silently get the base class's answers.
+        """
+        if type(self) is not NameNormalizer:
+            return self._normalize_uncached(str(value or ""))
+        return _normalize_cached(str(value or ""))
+
+    def _normalize_uncached(self, value: str) -> NormalizedName:
         raw = str(value or "")
         display = self.clean_display(raw)
         squashed = squash(display)
@@ -291,3 +309,13 @@ class NameNormalizer:
 
 
 name_normalizer = NameNormalizer()
+
+
+@lru_cache(maxsize=100_000)
+def _normalize_cached(raw: str) -> NormalizedName:
+    """The memoized body of :meth:`NameNormalizer.normalize`.
+
+    Bounded rather than unbounded: an import of unique names must not be able
+    to grow this without limit.
+    """
+    return name_normalizer._normalize_uncached(raw)

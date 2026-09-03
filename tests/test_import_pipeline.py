@@ -288,3 +288,61 @@ def test_range_type_survives_the_import(tmp_path, empty_database):
             )
     finally:
         manager.close()
+
+
+def test_a_new_bin_records_its_claims_without_probing_for_them(manager):
+    """The probe is skipped for a BIN inserted moments ago — but only for one.
+
+    Nothing can reference a row id that did not exist a moment ago, so the
+    existence check is provably empty there and is what made a 343,000-row
+    build spend most of its time in SELECTs that could only return nothing.
+    Re-ingesting the same row must still not duplicate the claim, which is the
+    half worth pinning: the speed is a consequence, the correctness is the
+    requirement.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.entities import BinClaim
+    from app.services.ingest_service import IngestService, RawBinRecord
+
+    record = RawBinRecord(
+        bin="410000", issuer="Cascade Bank", network="visa", country="US"
+    )
+
+    with manager.transaction() as session:
+        IngestService(session, source_code="probe", source_name="Probe").ingest(record)
+    with manager.session() as session:
+        first = session.execute(
+            select(func.count()).select_from(BinClaim)
+        ).scalar_one()
+    assert first > 0
+
+    # Same assertion again: the BIN now exists, so the probe runs and the
+    # claims are recognised rather than written a second time.
+    with manager.transaction() as session:
+        IngestService(session, source_code="probe", source_name="Probe").ingest(record)
+    with manager.session() as session:
+        second = session.execute(
+            select(func.count()).select_from(BinClaim)
+        ).scalar_one()
+    assert second == first
+
+
+def test_a_second_institution_on_an_existing_bin_is_still_linked(manager):
+    """Skipping the link probe must not skip the link."""
+    from sqlalchemy import select
+
+    from app.models.entities import Bin, BinInstitution
+    from app.services.ingest_service import IngestService, RawBinRecord
+
+    with manager.transaction() as session:
+        ingest = IngestService(session, source_code="probe", source_name="Probe")
+        ingest.ingest(RawBinRecord(bin="410001", issuer="Harbor Mutual", country="US"))
+        ingest.ingest(RawBinRecord(bin="410001", issuer="Pacific Savings", country="US"))
+
+    with manager.session() as session:
+        record = session.execute(select(Bin).where(Bin.bin == "410001")).scalar_one()
+        links = session.execute(
+            select(BinInstitution).where(BinInstitution.bin_id == record.id)
+        ).scalars().all()
+    assert len({link.institution_id for link in links}) == 2
