@@ -154,6 +154,14 @@ KNOWN_COLUMNS: dict[str, str | None] = {
     # institution's location would be a fabrication with a decimal point on it.
     "latitude": None,
     "longitude": None,
+    # Where a card is *accepted*, which is not where it was issued and not a
+    # property of the BIN at all. Kept in the source-row archive and never
+    # stored as the BIN's country: a list of BINs that work in one country
+    # says nothing about who issued them or from where.
+    #
+    # Bin-Tel describes issuance and ownership. Acceptance is closer to
+    # routing, which it deliberately makes no claim about.
+    "accepted_in": None,
 }
 
 #: Column spellings people actually type, folded onto the canonical name.
@@ -230,6 +238,21 @@ COLUMN_ALIASES: dict[str, str] = {
     "lon": "longitude",
     "lng": "longitude",
 }
+
+#: A line that tells the reader what one of *this file's* columns means.
+#:
+#: A column name does not carry its meaning. ``Pays`` is French for country,
+#: and in one real list it holds the country a card is *accepted* in — which
+#: is not where the card was issued, and reading it as the issuing country
+#: attributes Russian-issued BINs to Afghanistan. No alias table can know
+#: that; only the file can say it.
+#:
+#:     # bintel: Pays = accepted_in
+#:
+#: The left side is the column as the file spells it, the right side a column
+#: from :data:`KNOWN_COLUMNS`. The override beats :data:`COLUMN_ALIASES`, and
+#: an unknown target is an error like any other unrecognised column.
+_DIRECTIVE = re.compile(r"^#\s*bintel\s*:\s*(?P<source>[^=]+?)\s*=\s*(?P<target>\S+)\s*$", re.I)
 
 #: A BIN is 6 to 8 digits. Six is the historic length, eight the current one;
 #: both are first-class here, and neither is derived from the other.
@@ -432,7 +455,9 @@ def canonical_column(raw: str) -> str:
     return COLUMN_ALIASES.get(name, name)
 
 
-def resolve_columns(header: list[str]) -> dict[int, str]:
+def resolve_columns(
+    header: list[str], overrides: dict[str, str] | None = None
+) -> dict[int, str]:
     """Map each column position onto a canonical name, or refuse the file.
 
     Refusing is the point. A renamed or unexpected column means the file is not
@@ -445,9 +470,26 @@ def resolve_columns(header: list[str]) -> dict[int, str]:
     """
     resolved: dict[int, str] = {}
     unknown: list[str] = []
+    overrides = overrides or {}
     for index, raw in enumerate(header):
         name = canonical_column(raw)
         if not name:
+            continue
+        # A `# bintel:` line in the file beats the alias table, because the
+        # file knows what its own columns mean and the alias table cannot.
+        declared = overrides.get(name) or overrides.get(
+            canonical_column(raw.strip())
+        )
+        if declared:
+            if declared not in KNOWN_COLUMNS:
+                raise ImportError_(
+                    "A `# bintel:` line names a column Bin-Tel does not know.",
+                    detail=(
+                        f"{raw.strip()} = {declared}. Known columns: "
+                        f"{', '.join(KNOWN_COLUMNS)}."
+                    ),
+                )
+            resolved[index] = declared
             continue
         if name not in KNOWN_COLUMNS:
             unknown.append(raw.strip())
@@ -484,7 +526,9 @@ _HEADER_QUORUM = 2
 _HEADER_SHARE = 0.5
 
 
-def starts_a_new_section(cells: list[str], columns: dict[int, str]) -> bool:
+def starts_a_new_section(
+    cells: list[str], columns: dict[int, str], declared: dict[str, str] | None = None
+) -> bool:
     """Whether *cells* introduces a new section rather than being data.
 
     Two things have to be told apart, and getting either wrong is costly:
@@ -505,10 +549,15 @@ def starts_a_new_section(cells: list[str], columns: dict[int, str]) -> bool:
                 return False
             break
 
+    declared = declared or {}
     filled = [cell for cell in cells if (cell or "").strip()]
     if not filled:
         return False
-    known = sum(1 for cell in filled if canonical_column(cell) in KNOWN_COLUMNS)
+    known = sum(
+        1
+        for cell in filled
+        if canonical_column(cell) in KNOWN_COLUMNS or canonical_column(cell) in declared
+    )
     return known >= _HEADER_QUORUM and known >= len(filled) * _HEADER_SHARE
 
 
@@ -689,9 +738,18 @@ def _row_record(
 
 
 def iter_rows(
-    path: Path, *, encoding: str = "utf-8", delimiter: str | None = None
+    path: Path,
+    *,
+    encoding: str = "utf-8",
+    delimiter: str | None = None,
+    directives: dict[str, str] | None = None,
 ) -> Iterator[tuple[int, list[str]]]:
-    """Yield ``(line_number, cells)`` for every content row, skipping comments."""
+    """Yield ``(line_number, cells)`` for every content row, skipping comments.
+
+    ``directives`` is filled in as the file is read, so a ``# bintel:`` line
+    above the header is in force by the time the header is resolved. Collected
+    here rather than in a second pass because the file may be 26 MB.
+    """
     if delimiter is None:
         delimiter = _sniff_file(path, encoding=encoding)
     try:
@@ -701,6 +759,13 @@ def iter_rows(
                     continue
                 first = (cells[0] or "").strip().lstrip("﻿")
                 if first.startswith("#"):
+                    if directives is not None:
+                        # The delimiter may have split the comment; put it back.
+                        match = _DIRECTIVE.match(delimiter.join(cells).strip())
+                        if match:
+                            directives[canonical_column(match["source"])] = (
+                                match["target"].strip().lower()
+                            )
                     continue
                 if not any((cell or "").strip() for cell in cells):
                     continue
@@ -748,14 +813,15 @@ def _read_one(
     label = path.name
     found_header = False
 
-    for line, raw_cells in iter_rows(path, encoding=encoding):
+    directives: dict[str, str] = {}
+    for line, raw_cells in iter_rows(path, encoding=encoding, directives=directives):
         cells = _resplit(raw_cells)
-        if columns is None or starts_a_new_section(cells, columns):
+        if columns is None or starts_a_new_section(cells, columns, directives):
             # The first content row must be a header, and a fresh header
             # mid-file starts a new section with its own columns. Either way
             # an unrecognised column is raised rather than swallowed: a
             # mistyped header must not be mistaken for a missing one.
-            columns = resolve_columns(cells)
+            columns = resolve_columns(cells, directives)
             headers = [(cell or "").strip() for cell in cells]
             found_header = True
             for name in sorted(set(columns.values())):

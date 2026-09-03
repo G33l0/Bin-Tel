@@ -63,10 +63,12 @@ gets, and 7 affected rows in 343,063 is the scale of it.
 
 ## Two things the data says that are worth knowing
 
-**`Pays` in sample-b is the country of issuance, not the bank's home.** Cards
-issued in Afghanistan by Bank Alfalah (Pakistani) and CSCBank SAL (a Lebanese
-processor) are filed under Afghanistan. That is probably right for the cards
-and definitely not a claim about where those institutions are registered.
+**`Pays` in sample-b is the country the card WORKS IN.** Not where it was
+issued, not the bank's home, and not a property of the BIN. The file declares
+this itself with a `# bintel: Pays = accepted_in` line, so the value is kept
+and never stored as the BIN's country. Without that line the column read as an
+issuing country and attributed Russian-issued BINs (`404059` ZHELDORBANK JSB,
+`417628` QIWI BANK) to Afghanistan.
 
 **`latitude`/`longitude` in `binlist-data.csv` are country centroids.**
 `37.0902, -95.7129` is the geographic centre of the United States, repeated on

@@ -526,3 +526,61 @@ def test_a_list_whose_name_merely_contains_a_notice_word_is_still_read(tmp_path)
     report = read_bin_list(main)
     assert "licenses-by-bank.csv" in [source.name for source in report.sources]
     assert report.accepted == 2
+
+
+# ---------------------------------------------------------------------------
+# A file saying what its own columns mean
+# ---------------------------------------------------------------------------
+
+
+def test_a_file_can_declare_what_one_of_its_columns_means(tmp_path):
+    """A column name does not carry its meaning; only the file knows it.
+
+    `Pays` is French for country, and in one real list it holds the country a
+    card is *accepted* in. Read as the issuing country it attributed
+    Russian-issued BINs to Afghanistan.
+    """
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "# bintel: Pays = accepted_in\n"
+        "BIN\tPays\tEmetteur\n"
+        "404059\tAFGHANISTAN\tCascade Bank\n",
+    )
+    report = read_bin_list(path)
+    record = report.records[0]
+    assert record.issuer == "Cascade Bank"
+    assert record.country is None  # never asserted from an acceptance column
+    assert "accepted_in" in report.ignored_columns
+
+
+def test_without_the_declaration_the_alias_table_still_applies(tmp_path):
+    """The directive is an override, not a new requirement."""
+    path = write_named(
+        tmp_path, "bin-list.csv", "BIN\tPays\tEmetteur\n404059\tFRANCE\tCascade Bank\n"
+    )
+    assert read_bin_list(path).records[0].country == "FRANCE"
+
+
+def test_a_declaration_naming_an_unknown_column_is_refused(tmp_path):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "# bintel: Pays = wherever\nBIN\tPays\n404059\tAFGHANISTAN\n",
+    )
+    with pytest.raises(ImportError_) as excinfo:
+        read_bin_list(path)
+    assert "wherever" in (excinfo.value.detail or "")
+
+
+def test_a_declared_column_is_still_kept_in_full(tmp_path):
+    """Not asserted is not discarded — the row keeps every cell."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "# bintel: Pays = accepted_in\n"
+        "BIN\tPays\tEmetteur\n"
+        "404059\tAFGHANISTAN\tCascade Bank\n",
+    )
+    record = read_bin_list(path).records[0]
+    assert record.source_row["Pays"] == "AFGHANISTAN"

@@ -52,6 +52,7 @@ Everything else is optional, may be left blank, and may appear in any order:
 | `relationship` | `issuer` (default), `former_issuer`, `program_issuer`, `subsidiary`, `associated_institution` |
 | `effective_from`, `effective_to` | `YYYY-MM-DD` |
 | `notes` | anything you want to remember; never ingested |
+| `accepted_in` | the country a card is *accepted* in; recognised, never stored as the BIN's country |
 
 Lines beginning with `#` are ignored, so you can keep notes in the file itself.
 A UTF-8 byte-order mark is handled.
@@ -76,6 +77,26 @@ section with its own columns, so three lists can be pasted into one file
 without reconciling their headers first. Each section may use its own
 delimiter. Keeping each dataset as its own file in `bin-lists/` is tidier, and
 both work.
+
+**A file can say what its own columns mean.** A column name does not carry its
+meaning. `Pays` is French for country — and in one real list it holds the
+country a card is *accepted* in, which is not where it was issued and not a
+property of the BIN at all. Read as an issuing country it attributed
+Russian-issued BINs to Afghanistan. No alias table can know that; only the file
+can say it:
+
+```
+# bintel: Pays = accepted_in
+BIN	Pays	Emetteur	Marque
+404059	AFGHANISTAN	Cascade Bank	VISA
+```
+
+The left side is the column as the file spells it, the right side any column
+from the table above. The declaration beats the alias table, and naming a
+column Bin-Tel does not know is an error like any other. `accepted_in` is
+recognised and deliberately never stored: Bin-Tel describes issuance and
+ownership, and acceptance is closer to routing, which it makes no claim about.
+The value is still kept in full — `python -m app.cli origin <bin>` shows it.
 
 **Notices beside a dataset.** A redistributed dataset arrives with the licence
 it is redistributed under, and a licence is very often a `.txt` — which is also

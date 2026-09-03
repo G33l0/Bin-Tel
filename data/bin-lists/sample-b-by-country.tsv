@@ -1,3 +1,7 @@
+# This list is organised by the country a card WORKS IN, which is not
+# where it was issued and not a property of the BIN. Read as an issuing
+# country it attributes Russian-issued BINs to Afghanistan.
+# bintel: Pays = accepted_in
 BIN	Pays	Emetteur	Marque	Type	Niveau
 463769	AFGHANISTAN	AFGHAN UNITED BANK	VISA	DEBIT	GOLD
 466523	AFGHANISTAN	AFGHAN UNITED BANK	VISA	DEBIT	PREPAID GOLD
