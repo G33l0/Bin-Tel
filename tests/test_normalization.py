@@ -329,3 +329,32 @@ def test_the_same_name_in_two_countries_stays_two_institutions(ingest_session):
     jp = service.ensure_institution("Northern Bank", country=service.ensure_country("JP"))
     assert us is not None and jp is not None
     assert us.id != jp.id
+
+
+@pytest.mark.parametrize(
+    "dotted,plain",
+    [
+        ("CSCBANK S.A.L.", "CSCBANK SAL"),
+        ("U.S. Bank", "US Bank"),
+        ("J.P. Morgan Chase", "JP Morgan Chase"),
+        ("A.B.N. Amro", "ABN Amro"),
+    ],
+)
+def test_a_dotted_legal_form_matches_its_undotted_spelling(names, dotted, plain):
+    """Punctuation-stripping used to pull `S.A.L.` into three separate letters.
+
+    In a real list that cost a real merge: `CSCBANK S.A.L.` and `CSCBANK SAL`
+    became two institutions holding 210 and 9 BINs, and a lookup on either
+    named only half the evidence.
+    """
+    assert names.normalize(dotted).normalized == names.normalize(plain).normalized
+
+
+def test_a_lone_letter_is_not_welded_to_its_neighbour(names):
+    """Only a run of two or more joins — which is what a dotted form produces."""
+    assert names.normalize("Bank of a Nation").tokens == (
+        "bank",
+        "of",
+        "a",
+        "nation",
+    )
