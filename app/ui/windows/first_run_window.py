@@ -49,6 +49,15 @@ from app.workers.update_worker import UpdateCheckWorker, UpdateInstallWorker
 logger = get_logger(__name__)
 
 
+#: Measured, not guessed: 343,101 rows built in 690 s on the development
+#: machine, so about two milliseconds a row. Used only to say roughly how long
+#: a large build will take, and never presented as exact.
+BUILD_SECONDS_PER_ROW = 0.002
+
+#: Below this a build is quick enough that saying anything would be noise.
+ROWS_WORTH_WARNING = 20_000
+
+
 class FirstRunWindow(QDialog):
     """``Welcome to Bin-Tel`` → download → verify → install → ``Get Started``."""
 
@@ -230,6 +239,19 @@ class FirstRunWindow(QDialog):
                 f"{report.rejected:,} line(s) could not be read and will be skipped: "
                 f"{report.problems[0]}",
                 kind=StateKind.WARNING,
+            )
+        elif report.accepted >= ROWS_WORTH_WARNING:
+            # A shipped install arrives with a 343,000-row dataset, and a build
+            # that size takes minutes. Without saying so the window looks hung,
+            # and the honest fix is to say how long rather than to hide the
+            # progress or ship less data.
+            minutes = max(1, round(report.accepted * BUILD_SECONDS_PER_ROW / 60))
+            self._advise(
+                f"{report.accepted:,} rows is a large list — building it takes "
+                f"roughly {minutes} minute(s) on a typical machine, and reports "
+                "progress as it goes. It is done once; later rebuilds are only "
+                "needed when you change the list.",
+                kind=StateKind.INFO,
             )
         logger.info("First run read the BIN list: %s", summary)
 

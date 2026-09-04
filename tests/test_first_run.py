@@ -201,3 +201,35 @@ def test_a_seeded_list_is_readable_and_writable(tmp_path):
     assert path.exists()
     assert "bin,bank" in path.read_text(encoding="utf-8")
     path.write_text(path.read_text() + "410000,Test\n", encoding="utf-8")
+
+
+def test_a_large_list_says_how_long_the_build_will_take(qtbot, context, tmp_path):
+    """A shipped install arrives with 343,000 rows. Silence looks like a hang."""
+    from app.ui.windows.first_run_window import FirstRunWindow
+
+    listing = tmp_path / "bin-list.csv"
+    rows = "\n".join(f"{410000 + n},Bank {n}" for n in range(25_000))
+    listing.write_text(f"bin,bank\n{rows}\n", encoding="utf-8")
+    context.config.set_bin_list_path(listing)
+
+    window = FirstRunWindow(context)
+    qtbot.addWidget(window)
+    window.inspect_list()
+
+    assert window.primary_button.isEnabled()
+    assert "minute" in window.banner.message_label.text()
+
+
+def test_a_small_list_says_nothing_about_time(qtbot, context, tmp_path):
+    from app.ui.windows.first_run_window import FirstRunWindow
+
+    listing = tmp_path / "bin-list.csv"
+    listing.write_text("bin,bank\n410000,Cascade Bank\n", encoding="utf-8")
+    context.config.set_bin_list_path(listing)
+
+    window = FirstRunWindow(context)
+    qtbot.addWidget(window)
+    window.inspect_list()
+
+    assert window.primary_button.isEnabled()
+    assert "minute" not in window.banner.message_label.text()

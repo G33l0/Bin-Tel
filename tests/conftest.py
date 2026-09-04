@@ -69,6 +69,22 @@ def manager(database_path):
     manager.close()
 
 
+@pytest.fixture(autouse=True)
+def _no_shipped_datasets(tmp_path_factory, monkeypatch):
+    """Keep the repository's 343,000-row dataset out of every test's data dir.
+
+    The application seeds its shipped datasets beside the user's list, and in a
+    checkout the "bundle" is the repository — so without this every test that
+    asks for a BIN list path would copy 26 MB and then try to build from it.
+    Tests that exercise seeding point this at a fixture of their own.
+    """
+    from app.services import bin_list as module
+
+    monkeypatch.setattr(
+        module, "bundled_datasets_dir", lambda: tmp_path_factory.mktemp("nodata")
+    )
+
+
 @pytest.fixture
 def paths(tmp_path, monkeypatch):
     """Application paths rooted in a temporary directory."""

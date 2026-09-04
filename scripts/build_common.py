@@ -38,6 +38,19 @@ DATA_FILES: tuple[tuple[str, str], ...] = (
     ("assets/themes", "assets/themes"),
     # The BIN list template the first run seeds a writable copy from.
     ("data/bin-list.csv", "data"),
+    # The public dataset, so an install arrives able to answer something
+    # rather than with an empty database. Named file by file rather than as a
+    # folder: the samples beside them are placeholders for the maintainer's own
+    # lists and have no business in someone else's install.
+    #
+    # The licence and attribution are not optional extras. The dataset is CC BY
+    # 4.0, which permits redistribution *provided the attribution travels with
+    # it*, and an installer is redistribution. Removing either line from this
+    # list breaks the terms the file is carried under.
+    ("data/bin-lists/binlist-data.csv", "data/bin-lists"),
+    ("data/bin-lists/binlist-data.csv.bintel", "data/bin-lists"),
+    ("data/bin-lists/binlist-data.LICENSE.txt", "data/bin-lists"),
+    ("data/bin-lists/ATTRIBUTION.md", "data/bin-lists"),
 )
 
 #: Modules PyInstaller's static analysis cannot see (loaded via SQLAlchemy's

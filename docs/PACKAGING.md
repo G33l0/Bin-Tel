@@ -127,19 +127,23 @@ sudo apt install libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
 **Ships:** the application, Qt, branding, icons, theme tokens, and an empty
 **BIN list template**.
 
-**Does not ship:** any database, and any BIN data — including the 343,063-row
-`data/bin-lists/binlist-data.csv` that lives in this repository. That file is
-here so the project can be built and tested against real data; it is not part
-of the installer. Bin-Tel builds its database from the list *you* maintain, so
-a fresh install starts empty and the first run walks you through filling it.
+**Also ships:** the 343,063-row `binlist-data.csv`, **with its CC BY 4.0
+licence and attribution**, so an install arrives able to answer something
+instead of with an empty database. About 3 MB on the archive.
 
-If you want an install to arrive with data in it, that is a deliberate change
-rather than a setting: add the dataset to `DATA_FILES` in
-`scripts/build_common.py` **with its licence and attribution files**, and
-extend `app.services.bin_list.seed_bin_list` to copy the `bin-lists` folder out
-of the bundle the way it already copies the template. Both halves are needed —
-the bundle is read-only and `list_sources` looks beside the user's own list,
-not inside the application. Budget about 3 MB on the archive.
+Removing either the licence or the attribution from `DATA_FILES` breaks the
+terms the file is carried under — CC BY permits redistribution *provided the
+attribution travels with it*, and an installer is redistribution.
+
+**Does not ship:** any built database, and the sample lists beside the dataset
+— those are placeholders for the maintainer's own research and have no
+business in someone else's install.
+
+Shipping data takes two halves, and doing one alone ships a file that is never
+read. `DATA_FILES` puts it in the bundle; `seed_datasets` copies it out to the
+user's data folder on first run. The bundle is read-only, and when frozen it
+may be a temporary directory that disappears on exit, so `list_sources`
+deliberately looks beside the *user's* list and nowhere else.
 
 The template matters more than it looks. A packaged application unpacks its
 data files into a temporary directory that is deleted on exit, so the shipped
@@ -198,5 +202,8 @@ experience rather than your own existing setup:
 BINTEL_DATA_DIR=/tmp/bintel-check ./dist/Bin-Tel/Bin-Tel
 ```
 
-You should get the welcome screen, and `/tmp/bintel-check/bin-list.csv` should
-exist and be writable afterwards.
+You should get the welcome screen, and afterwards `/tmp/bintel-check/` should
+hold a writable `bin-list.csv` **and** a `bin-lists/` folder with the dataset,
+its licence and its attribution in it. The welcome screen should report about
+343,000 rows and say roughly how long building them takes — a build that size
+runs for minutes, and a window that says nothing about it looks hung.

@@ -492,16 +492,20 @@ class ConfigManager:
         A packaged application unpacks its resources to a temporary folder that
         is deleted on exit, so the bundled template can never be the file the
         user edits. The working copy therefore lives in the data directory, and
-        is seeded from the template the first time it is needed.
+        is seeded from the template the first time it is needed. The datasets
+        shipped with the application are copied out beside it for the same
+        reason, and only here: a list the user has pointed somewhere else of
+        their own is their folder, not somewhere to unpack 26 MB into.
         """
         configured = self.settings.database.bin_list_path.strip()
         if configured:
             return Path(configured).expanduser()
 
-        from app.services.bin_list import BIN_LIST_FILENAME, seed_bin_list
+        from app.services.bin_list import BIN_LIST_FILENAME, seed_bin_list, seed_datasets
 
         working = self._paths.data_dir / BIN_LIST_FILENAME
         seed_bin_list(working)
+        seed_datasets(self._paths.data_dir)
         return working
 
     def set_bin_list_path(self, path: Path | None) -> None:

@@ -674,3 +674,61 @@ def test_an_unusable_padding_declaration_is_refused(tmp_path):
     with pytest.raises(ImportError_) as excinfo:
         read_bin_list(path)
     assert "maybe" in (excinfo.value.detail or "")
+
+
+def test_shipped_datasets_are_copied_where_they_can_be_read(tmp_path, monkeypatch):
+    """The bundle is read-only, and when frozen it may not outlive the process.
+
+    A dataset inside the application is never the file the rebuild reads, so
+    shipping one means copying it out — licence and attribution included,
+    because those are the terms it travels under.
+    """
+    from app.services import bin_list as module
+
+    bundle = tmp_path / "bundle" / "data" / "bin-lists"
+    bundle.mkdir(parents=True)
+    (bundle / "public.csv").write_text("bin,issuer\n530001,Meridian\n", encoding="utf-8")
+    (bundle / "public.csv.bintel").write_text("# bintel: confidence = 0.5\n", encoding="utf-8")
+    (bundle / "public.LICENSE.txt").write_text("Attribution 4.0 International\n", encoding="utf-8")
+    monkeypatch.setattr(module, "bundled_datasets_dir", lambda: bundle)
+
+    data_dir = tmp_path / "userdata"
+    data_dir.mkdir()
+    copied = module.seed_datasets(data_dir)
+
+    assert {item.name for item in copied} == {
+        "public.csv",
+        "public.csv.bintel",
+        "public.LICENSE.txt",
+    }
+    # And it is now somewhere the reader actually looks.
+    main = data_dir / "bin-list.csv"
+    main.write_text("bin,bank\n410000,Cascade Bank\n", encoding="utf-8")
+    report = read_bin_list(main)
+    assert {record.bin for record in report.records} == {"410000", "530001"}
+    # The sidecar came too, so the dataset's trust level applies.
+    assert [r.confidence for r in report.records if r.bin == "530001"] == [0.5]
+
+
+def test_seeding_never_overwrites_what_the_user_changed(tmp_path, monkeypatch):
+    from app.services import bin_list as module
+
+    bundle = tmp_path / "bundle" / "data" / "bin-lists"
+    bundle.mkdir(parents=True)
+    (bundle / "public.csv").write_text("bin,issuer\n530001,Meridian\n", encoding="utf-8")
+    monkeypatch.setattr(module, "bundled_datasets_dir", lambda: bundle)
+
+    data_dir = tmp_path / "userdata"
+    (data_dir / "bin-lists").mkdir(parents=True)
+    mine = data_dir / "bin-lists" / "public.csv"
+    mine.write_text("bin,issuer\n999999,Mine\n", encoding="utf-8")
+
+    assert module.seed_datasets(data_dir) == []
+    assert mine.read_text(encoding="utf-8") == "bin,issuer\n999999,Mine\n"
+
+
+def test_seeding_is_silent_when_nothing_is_shipped(tmp_path, monkeypatch):
+    from app.services import bin_list as module
+
+    monkeypatch.setattr(module, "bundled_datasets_dir", lambda: tmp_path / "absent")
+    assert module.seed_datasets(tmp_path) == []

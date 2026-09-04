@@ -418,12 +418,68 @@ def seed_bin_list(path: Path) -> Path:
     return path
 
 
+def bundled_datasets_dir() -> Path:
+    """The read-only datasets folder shipped inside the application."""
+    from app.core.paths import bundle_root
+
+    return bundle_root() / "data" / EXTRA_LIST_DIRNAME
+
+
+def seed_datasets(data_dir: Path) -> list[Path]:
+    """Copy the shipped datasets somewhere the user can actually read them.
+
+    The application's own folder is read-only — and when frozen it may be a
+    temporary directory that disappears on exit — so a dataset inside it is
+    never the file the rebuild reads. :func:`list_sources` deliberately looks
+    beside the *user's* list and nowhere else, which is what keeps "the
+    database is built from files you control" true. Shipping a dataset
+    therefore means copying it out, once, on first run.
+
+    Only files that are not already there are written, so a dataset the user
+    edited, replaced or deleted stays the way they left it. Returns what was
+    actually copied.
+    """
+    source = bundled_datasets_dir()
+    if not source.is_dir():
+        return []
+    target = data_dir / EXTRA_LIST_DIRNAME
+    copied: list[Path] = []
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        for item in sorted(source.iterdir()):
+            if not item.is_file():
+                continue
+            destination = target / item.name
+            if destination.exists():
+                continue
+            # Byte-for-byte: the dataset is redistributed under a licence that
+            # asks modifications be declared, and the licence and attribution
+            # travelling beside it are the terms it is carried under.
+            destination.write_bytes(item.read_bytes())
+            copied.append(destination)
+    except OSError:  # pragma: no cover - a read-only volume is reported later
+        logger.warning("Could not seed datasets into %s", target, exc_info=True)
+        return copied
+    if copied:
+        logger.info(
+            "Seeded %d shipped dataset file(s)",
+            len(copied),
+            extra={"context": {"files": [item.name for item in copied]}},
+        )
+    return copied
+
+
 def default_bin_list_path() -> Path:
     """The working BIN list: the user's own copy, seeded if it is missing."""
     from app.core.paths import get_paths
 
-    working = get_paths().data_dir / BIN_LIST_FILENAME
-    return seed_bin_list(working)
+    data_dir = get_paths().data_dir
+    working = data_dir / BIN_LIST_FILENAME
+    seed_bin_list(working)
+    # Datasets are seeded alongside, so a fresh install has something to build
+    # from rather than an empty list and a welcome screen.
+    seed_datasets(data_dir)
+    return working
 
 
 def is_data_file(item: Path) -> bool:
