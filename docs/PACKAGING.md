@@ -43,8 +43,10 @@ there is only the fallback for compiling the script by hand.
 ### Without a Windows machine
 
 `.github/workflows/windows-installer.yml` builds it on a `windows-latest`
-runner — Actions tab → **Windows installer** → Run workflow, or push a `v*`
-tag. It runs the tests, builds, checks the frozen `.exe` starts, verifies the
+runner. Two ways in: the Actions tab → **Windows installer** → Run workflow,
+which GitHub only offers once the file is on the default branch; and a push to
+a `claude/**` branch that touches packaging, which is how it gets tested before
+it is merged. It runs the tests, builds, checks the frozen `.exe` starts, verifies the
 dataset and its licence are in the bundle, and uploads the installer as an
 artifact. That run is also the only place the suite executes on Windows.
 
