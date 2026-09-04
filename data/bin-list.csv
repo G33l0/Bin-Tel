@@ -51,6 +51,21 @@
 #
 # Only a row repeating the SAME bank, relationship and period is a correction.
 #
+# A whole dataset is easier to keep as its own file than to merge into this
+# one. Put it in a `bin-lists` folder beside this file and it is read too,
+# with its own columns and its own delimiter — tab-separated is fine, and so
+# are the column names it already has (`Issuer`, `Emetteur`, `isoCode2`,
+# `Marque`, `Niveau` and others all resolve).
+#
+# If a list has been through a spreadsheet, its BIN column may have lost its
+# leading zeros: 042410 comes back as 42410. Bin-Tel refuses anything under
+# six digits rather than guess, and tells you what the value may have been.
+# Rebuild with --pad-short-bins once you are sure that is what happened.
+#
+# Padding cannot fix everything: an 8-digit BIN starting 00 survives as six
+# digits and looks like an ordinary 6-digit BIN. Where you can, re-export the
+# source with the BIN column formatted as Text and none of this arises.
+#
 # Never put a full card number, CVV, PIN or cardholder name in this file.
 # The reader refuses anything longer than 8 digits for exactly that reason.
 #

@@ -207,6 +207,36 @@ class InstitutionLinkType(StrEnum):
         }[self]
 
 
+class LearnedStatus(StrEnum):
+    """Where a learned fact has reached on its way into the database.
+
+    Nothing moves between these states on its own. ``PENDING`` is a proposal
+    and nothing more: it has been recorded, it is visible, and the database
+    people query is unchanged by it.
+    """
+
+    #: Gathered and waiting on a decision. The database is untouched.
+    PENDING = "pending"
+    #: A decision was taken to accept it, but it has not been written yet.
+    APPROVED = "approved"
+    #: Written into the database, with provenance.
+    APPLIED = "applied"
+    #: Declined. Kept, so the same proposal is not raised again and again.
+    REJECTED = "rejected"
+    #: A later proposal about the same field replaced this one.
+    SUPERSEDED = "superseded"
+
+    @property
+    def label(self) -> str:
+        return {
+            LearnedStatus.PENDING: "Waiting for you",
+            LearnedStatus.APPROVED: "Approved",
+            LearnedStatus.APPLIED: "Applied",
+            LearnedStatus.REJECTED: "Rejected",
+            LearnedStatus.SUPERSEDED: "Superseded",
+        }[self]
+
+
 class StagingStatus(StrEnum):
     """Where a staged record has reached in the promotion pipeline."""
 
@@ -496,6 +526,11 @@ class Bin(Base):
     prefix8: Mapped[str | None] = mapped_column(String(8))
     network_id: Mapped[int | None] = mapped_column(ForeignKey("networks.id", ondelete="SET NULL"))
     brand: Mapped[str | None] = mapped_column(String(64))
+    #: The product tier as the source named it — Gold, Platinum, World,
+    #: Titanium, Business. Separate from ``brand`` because "Visa" and "Gold"
+    #: are two different facts, and folding them into one string loses the
+    #: ability to filter on either.
+    card_level: Mapped[str | None] = mapped_column(String(48))
     card_type: Mapped[str] = mapped_column(String(24), default=CardType.UNKNOWN.value)
     funding_type: Mapped[str] = mapped_column(String(24), default=FundingType.UNKNOWN.value)
     is_prepaid: Mapped[bool | None] = mapped_column(Boolean)
@@ -514,6 +549,9 @@ class Bin(Base):
         back_populates="bin_record", cascade="all, delete-orphan"
     )
     claims: Mapped[list[BinClaim]] = relationship(
+        back_populates="bin_record", cascade="all, delete-orphan"
+    )
+    source_rows: Mapped[list[SourceRow]] = relationship(
         back_populates="bin_record", cascade="all, delete-orphan"
     )
 
@@ -1009,3 +1047,114 @@ class DatabaseStatistic(Base):
         UniqueConstraint("scope", "key", name="uq_statistic_scope_key"),
         Index("ix_database_statistics_scope", "scope", "value"),
     )
+
+
+class SourceRow(Base):
+    """One row of a source list, kept exactly as it arrived.
+
+    The curated columns on :class:`Bin` are an *interpretation* of a source
+    row: names are folded onto canonical spellings, three ways of writing a
+    country collapse into one, and a column Bin-Tel makes no claim about is not
+    asserted anywhere. That interpretation is what a lookup answers with, and
+    it is deliberately narrower than the row behind it.
+
+    Narrower must not mean lossy. This table holds the row under its *own*
+    headers, so nothing a source said is ever discarded — a column Bin-Tel has
+    no field for, a coordinate pair it declines to assert as an address, a
+    spelling it normalized away. When a curated value is later questioned, the
+    row that produced it is still here to check against.
+
+    It is never surfaced as a section of a lookup result. Results state what
+    Bin-Tel holds; this is the working behind it.
+    """
+
+    __tablename__ = "source_rows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bin_id: Mapped[int] = mapped_column(
+        ForeignKey("bins.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The file the row came from, by name only — never a full path, which
+    #: would put a home directory into an exportable database.
+    source_file: Mapped[str | None] = mapped_column(String(128))
+    line_number: Mapped[int | None] = mapped_column(Integer)
+    #: The row as JSON, keyed by the source's own column names, in the order
+    #: the file wrote them. Issuer metadata only, as everywhere else.
+    payload: Mapped[str | None] = mapped_column(Text)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+    bin_record: Mapped[Bin] = relationship(back_populates="source_rows")
+
+    __table_args__ = (
+        Index("ix_source_rows_bin", "bin_id"),
+        Index("ix_source_rows_file", "source_file", "line_number"),
+    )
+
+
+class LearnedFact(Base):
+    """Something a source says that Bin-Tel has not accepted yet.
+
+    Every route by which the database could learn something ends here first,
+    and a row in this table changes nothing on its own. That is the whole
+    point of it: an automatic pipeline that writes what it finds is a pipeline
+    that eventually writes something wrong into a database nobody re-checks.
+
+    A fact is written only when two separate permissions exist — the *source*
+    is one the user has authorized, and the *fact* has been approved. Neither
+    implies the other, and neither is ever granted by the code itself.
+    """
+
+    __tablename__ = "learned_facts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    #: "bin" or "institution".
+    subject_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    #: The BIN digits, or the institution's uid — a value, never a row id, so
+    #: a proposal survives the database being rebuilt underneath it.
+    subject_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    field: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: What the database held when the proposal was raised. Kept so a stale
+    #: proposal can be spotted rather than applied over a since-changed value.
+    current_value: Mapped[str | None] = mapped_column(Text)
+    proposed_value: Mapped[str | None] = mapped_column(Text)
+    source_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_reference: Mapped[str | None] = mapped_column(String(512))
+    #: The source's licence standing at the time, so an approval decision is
+    #: made with it in view rather than looked up afterwards.
+    licence: Mapped[str | None] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    #: Why this is being proposed, in a sentence a person can judge.
+    evidence: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        String(16), default=LearnedStatus.PENDING.value, nullable=False
+    )
+    decided_reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+    applied_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "subject_type",
+            "subject_key",
+            "field",
+            "source_code",
+            "proposed_value",
+            name="uq_learned_fact",
+        ),
+        Index("ix_learned_facts_status", "status", "created_at"),
+        Index("ix_learned_facts_subject", "subject_type", "subject_key"),
+    )
+
+    @property
+    def is_pending(self) -> bool:
+        return self.status == LearnedStatus.PENDING.value
+
+    @property
+    def is_new_information(self) -> bool:
+        """Whether this fills a gap rather than contradicting something held.
+
+        Worth keeping apart in every view: filling a blank is a much smaller
+        decision than overruling a value the list already asserts.
+        """
+        return not (self.current_value or "").strip()

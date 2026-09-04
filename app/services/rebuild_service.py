@@ -52,6 +52,7 @@ from app.services.bin_list import BinListReport, read_bin_list
 from app.services.dedupe_service import DedupeService
 from app.services.enrichment_service import EnrichmentReport, EnrichmentService
 from app.services.ingest_service import IngestResult, IngestService
+from app.services.learning_service import Authorization, LearningReport, LearningService
 
 logger = get_logger(__name__)
 
@@ -85,6 +86,8 @@ class RebuildOutcome:
     previous_path: Path | None = None
     #: What the enrichment pass filled in from evidence already in the build.
     enrichment: EnrichmentReport = field(default_factory=EnrichmentReport)
+    #: What the build noticed but did not decide. Proposals, not changes.
+    learned: LearningReport = field(default_factory=LearningReport)
     problems: list[str] = field(default_factory=list)
     elapsed_seconds: float = 0.0
 
@@ -126,11 +129,17 @@ class RebuildService:
         database_path: Path,
         *,
         staging_dir: Path | None = None,
+        learning: Authorization | None = None,
     ) -> None:
         self._manager = manager
         self._database_path = database_path
         self._staging_dir = staging_dir or database_path.parent / "staging"
         self._enrichment = EnrichmentReport()
+        # None means a caller that has not opted in at all, which is not the
+        # same as an Authorization that happens to be switched off; both end
+        # up gathering nothing, and neither reaches for a network.
+        self._learning = learning
+        self._learned = LearningReport()
 
     # -- paths --------------------------------------------------------------
     def set_paths(self, database_path: Path, staging_dir: Path | None = None) -> None:
@@ -159,12 +168,18 @@ class RebuildService:
         version: str | None = None,
         progress: Callable[[str], None] | None = None,
         allow_shrink: bool = False,
+        pad_short_bins: bool = False,
     ) -> RebuildOutcome:
         """Build a database from the list and make it the active one.
 
         Raises before touching the live database when the list cannot be read,
         when the staged database fails verification, or when the rebuild would
         drop most of the records and *allow_shrink* was not asked for.
+
+        ``pad_short_bins`` is for a list that has been through a spreadsheet
+        and come back with its leading zeros stripped. It is off by default
+        because ``42410`` and ``042410`` are different BINs and the file alone
+        cannot say which was meant.
         """
         started = datetime.now(UTC)
 
@@ -173,7 +188,7 @@ class RebuildService:
                 progress(message)
 
         emit("Reading the BIN list…")
-        report = read_bin_list(list_path)
+        report = read_bin_list(list_path, pad_short_bins=pad_short_bins)
 
         previous_count = self._current_record_count()
         if (
@@ -211,6 +226,7 @@ class RebuildService:
             emit(f"Building {report.accepted:,} record(s)…")
             result = self._build_candidate(candidate, report, version, emit)
             outcome.enrichment = self._enrichment
+            outcome.learned = self._learned
             outcome.institutions = result.institutions_created
             outcome.ranges = result.ranges_created
             outcome.conflicts = result.conflicts
@@ -318,6 +334,19 @@ class RebuildService:
                 dedupe = DedupeService(session)
                 dedupe_report = dedupe.run(merge=False)
             result.conflicts += dedupe_report.range_conflicts_recorded
+
+            # What the build could not settle is offered rather than decided.
+            # This reads only what is already in the staged database — no
+            # network, no external source — so it costs a query and changes no
+            # answer: every proposal lands in the ledger and waits.
+            if self._learning is not None and self._learning.enabled:
+                emit("Noting what could be learned…")
+                with manager.transaction() as session:
+                    service = LearningService(session, self._learning)
+                    self._learned = service.record(service.gather_local())
+                    if self._learning.auto_apply_new_information:
+                        applied = service.apply_approved()
+                        self._learned.applied = applied.applied
 
             rebuild_indexes(manager.engine)
             stamp_schema_version(manager.engine, SCHEMA_VERSION)

@@ -13,6 +13,7 @@ in ``conflicts`` (and in ``bin_claims``) so the disagreement is recoverable.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -45,6 +46,7 @@ from app.models.entities import (
     RecordStatus,
     RelationshipType,
     Source,
+    SourceRow,
 )
 from app.normalizers.bin_normalizer import bin_normalizer
 from app.normalizers.card_normalizer import card_normalizer
@@ -52,7 +54,7 @@ from app.normalizers.geo_normalizer import geo_normalizer
 from app.normalizers.name_normalizer import name_normalizer
 from app.normalizers.network_normalizer import NETWORKS, network_normalizer
 from app.normalizers.reference import BY_ISO2
-from app.normalizers.text import squash
+from app.normalizers.text import sanitise_text, squash
 
 logger = get_logger(__name__)
 
@@ -61,6 +63,7 @@ logger = get_logger(__name__)
 CONFLICT_FIELDS = (
     "network",
     "brand",
+    "card_level",
     "card_type",
     "funding_type",
     "country",
@@ -68,6 +71,24 @@ CONFLICT_FIELDS = (
     "issuer",
     "status",
 )
+
+
+def _brand_label(brand: str | None, network: Network | None) -> str | None:
+    """The brand to store, tidied but never invented.
+
+    Sources shout their scheme in the brand column — ``VISA``, ``MASTERCARD``.
+    Where the brand names the very scheme already resolved for the record, the
+    catalogue's spelling of that scheme is used, so one result does not read
+    "Visa" and the next "VISA". Anything the catalogue does not recognise
+    (``PAGOBANCOMAT``, ``LOCAL BRAND``) is kept exactly as the source wrote
+    it — the words are evidence, and rewriting them would be a guess.
+    """
+    text = sanitise_text(brand, limit=64)
+    if text is None:
+        return network.display_name if network else None
+    if network is not None and network_normalizer.normalize(text).code == network.code:
+        return network.display_name
+    return text
 
 
 class RawBinRecord(BaseModel):
@@ -85,6 +106,10 @@ class RawBinRecord(BaseModel):
     network: str | None = None
     brand: str | None = None
     card_type: str | None = None
+    #: The product tier a source names — STANDARD, GOLD, PLATINUM, WORLD,
+    #: TITANIUM, BUSINESS. Kept as its own field rather than folded into the
+    #: brand, because "Visa" and "Gold" are two different facts about a card.
+    card_level: str | None = None
     funding_type: str | None = None
     prepaid: str | bool | None = None
     commercial: str | bool | None = None
@@ -115,6 +140,13 @@ class RawBinRecord(BaseModel):
     effective_to: datetime | None = None
     #: How this record relates the institution to the BIN. Defaults to issuer.
     relationship: str | None = None
+    #: The row this record was read from, under the source's own column names.
+    #: Carried so nothing a source said is lost to the curated fields, which
+    #: are narrower on purpose. Never interpreted here — it is kept, not read.
+    source_row: dict[str, str] = {}
+    #: Where that row came from: file name and line, for checking against.
+    source_file: str | None = None
+    source_line: int | None = None
 
 
 @dataclass(slots=True)
@@ -552,6 +584,31 @@ class IngestService:
             )
         )
 
+    def _archive_source_row(self, record: Bin, raw: RawBinRecord) -> None:
+        """Keep the row this record was read from, under its own headers.
+
+        The curated columns are an interpretation and a narrow one: a country
+        spelled three ways becomes one code, a coordinate pair Bin-Tel will
+        not assert as an address is not stored as one, and a column it has no
+        field for has nowhere to go. All of that still happened, and the row
+        is what says so.
+
+        Written once per row, not once per field, and skipped entirely when a
+        record arrived without one — an external reading has no file behind it.
+        """
+        if not raw.source_row:
+            return
+        self._session.add(
+            SourceRow(
+                bin_id=record.id,
+                # The name only. A full path would put a home directory into a
+                # database that is meant to be portable.
+                source_file=(raw.source_file or "")[:128] or None,
+                line_number=raw.source_line,
+                payload=json.dumps(raw.source_row, ensure_ascii=False),
+            )
+        )
+
     # -- main entry point -------------------------------------------------
     def ingest(self, raw: RawBinRecord, result: IngestResult | None = None) -> str:
         """Normalize and write one record. Returns the action taken."""
@@ -601,7 +658,8 @@ class IngestService:
 
         values: dict[str, Any] = {
             "network_id": network.id if network else None,
-            "brand": raw.brand or (network.display_name if network else None),
+            "brand": _brand_label(raw.brand, network),
+            "card_level": card_normalizer.card_level(raw.card_level),
             "card_type": card_type.value,
             "funding_type": funding.value,
             "is_prepaid": card_normalizer.is_prepaid(raw.prepaid, card_type),
@@ -653,7 +711,8 @@ class IngestService:
             else:
                 result.unchanged += 1
 
-        self._record_claims(record, raw, values)
+        self._record_claims(record, raw, values, is_new=action == "created")
+        self._archive_source_row(record, raw)
 
         if institution is not None:
             self._link(
@@ -670,6 +729,7 @@ class IngestService:
                 ),
                 effective_from=raw.effective_from,
                 effective_to=raw.effective_to,
+                bin_is_new=action == "created",
             )
         if parent is not None and (institution is None or parent.id != institution.id):
             self._link(
@@ -679,6 +739,7 @@ class IngestService:
                 raw.confidence * 0.9,
                 primary=False,
                 effective_from=raw.effective_from,
+                bin_is_new=action == "created",
             )
 
         if raw.bin_high:
@@ -765,8 +826,23 @@ class IngestService:
             )
         )
 
-    def _record_claims(self, record: Bin, raw: RawBinRecord, values: dict[str, Any]) -> None:
-        """Preserve lineage so a merge decision can always be re-examined."""
+    def _record_claims(
+        self,
+        record: Bin,
+        raw: RawBinRecord,
+        values: dict[str, Any],
+        *,
+        is_new: bool = False,
+    ) -> None:
+        """Preserve lineage so a merge decision can always be re-examined.
+
+        ``is_new`` says this BIN was inserted moments ago in this same run, in
+        which case nothing can already reference its id and the existence
+        probe below is provably pointless. It is not an optimisation that
+        trades correctness for speed: on a fresh build it removes one SELECT
+        per claim per row — five queries a row, each dragging an autoflush
+        behind it — and on a 343,000-row list that was most of the build.
+        """
         if self._source is None:
             return
         interesting = {
@@ -779,14 +855,18 @@ class IngestService:
         for field_name, value in interesting.items():
             if not value:
                 continue
-            exists = self._session.execute(
-                select(BinClaim.id).where(
-                    BinClaim.bin_id == record.id,
-                    BinClaim.source_id == self._source.id,
-                    BinClaim.field == field_name,
-                    BinClaim.value == str(value),
-                )
-            ).scalar()
+            exists = (
+                None
+                if is_new
+                else self._session.execute(
+                    select(BinClaim.id).where(
+                        BinClaim.bin_id == record.id,
+                        BinClaim.source_id == self._source.id,
+                        BinClaim.field == field_name,
+                        BinClaim.value == str(value),
+                    )
+                ).scalar()
+            )
             if exists is None:
                 self._session.add(
                     BinClaim(
@@ -821,14 +901,21 @@ class IngestService:
         is_current: bool = True,
         effective_from: datetime | None = None,
         effective_to: datetime | None = None,
+        bin_is_new: bool = False,
     ) -> None:
-        existing = self._session.execute(
-            select(BinInstitution).where(
-                BinInstitution.bin_id == record.id,
-                BinInstitution.institution_id == institution.id,
-                BinInstitution.relationship_type == relationship.value,
-            )
-        ).scalar_one_or_none()
+        # As in _record_claims: a BIN inserted moments ago has no links yet,
+        # so looking for one is a query that can only ever return nothing.
+        existing = (
+            None
+            if bin_is_new
+            else self._session.execute(
+                select(BinInstitution).where(
+                    BinInstitution.bin_id == record.id,
+                    BinInstitution.institution_id == institution.id,
+                    BinInstitution.relationship_type == relationship.value,
+                )
+            ).scalar_one_or_none()
+        )
         if existing is not None:
             existing.last_updated = datetime.now(UTC)
             return

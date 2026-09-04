@@ -295,6 +295,35 @@ def _to_v2(engine: Engine) -> None:
         )
 
 
+@register(3, "the card product tier as its own column")
+def _to_v3(engine: Engine) -> None:
+    """Give a BIN somewhere to keep its product tier.
+
+    Every real BIN list seen so far carries one — ``GOLD``, ``PLATINUM``,
+    ``WORLD``, ``PREPAID CLASSIC`` — and until now it had nowhere to go but
+    the brand, where it was indistinguishable from the scheme name. Older
+    packages simply have the column empty, which is the truthful state: they
+    never recorded a tier, so none is claimed for them.
+    """
+    _add_column(engine, "bins", "card_level", "VARCHAR(48)")
+
+
+@register(4, "keep every source column, and hold what is learned before writing it")
+def _to_v4(engine: Engine) -> None:
+    """Two tables that only ever add, never overwrite.
+
+    ``source_rows`` keeps each list row under its own headers, so the curated
+    columns stop being the only surviving record of what a source said.
+    ``learned_facts`` holds anything Bin-Tel works out or is told until it is
+    authorized and approved — an older package simply has neither, and gains
+    both empty, which claims nothing about its existing rows.
+    """
+    from app.models.entities import LearnedFact, SourceRow
+
+    for model in (SourceRow, LearnedFact):
+        model.__table__.create(engine, checkfirst=True)
+
+
 def ensure_optional_tables(engine: Engine) -> list[str]:
     """Create tables this build expects but an older package may not carry.
 
@@ -309,7 +338,9 @@ def ensure_optional_tables(engine: Engine) -> list[str]:
         DatabaseStatistic,
         DatabaseVersion,
         InstitutionHistory,
+        LearnedFact,
         NormalizationEvent,
+        SourceRow,
         UpdateHistory,
     )
 
@@ -317,6 +348,8 @@ def ensure_optional_tables(engine: Engine) -> list[str]:
         BinHistory,
         InstitutionHistory,
         DatabaseVersion,
+        SourceRow,
+        LearnedFact,
         DatabaseStatistic,
         UpdateHistory,
         NormalizationEvent,

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from functools import lru_cache
 from urllib.parse import urlparse
 
 from app.normalizers.confidence import (
@@ -73,13 +74,30 @@ class NameNormalizer:
     """Canonicalises institution names and scores candidate matches."""
 
     def normalize(self, value: str | None) -> NormalizedName:
+        """Canonical forms for one raw name.
+
+        Memoized because a real BIN list names the same handful of banks over
+        and over — 343,000 rows resolved to 12,405 institutions — and the
+        derivation underneath runs a few dozen regular expressions each time.
+        The result is a frozen dataclass of strings and tuples, so a cached one
+        cannot be mutated by whoever receives it.
+
+        The shared cache is keyed on the string alone, so it is used only by
+        the canonical normalizer. A subclass that changed the derivation would
+        otherwise silently get the base class's answers.
+        """
+        if type(self) is not NameNormalizer:
+            return self._normalize_uncached(str(value or ""))
+        return _normalize_cached(str(value or ""))
+
+    def _normalize_uncached(self, value: str) -> NormalizedName:
         raw = str(value or "")
         display = self.clean_display(raw)
         squashed = squash(display)
         squashed = _BRANCH_NOISE.sub(" ", squashed)
         squashed = collapse_whitespace(squashed)
 
-        all_tokens = self._expand_abbreviations(squashed.split())
+        all_tokens = _join_initial_runs(self._expand_abbreviations(squashed.split()))
         core_tokens, dropped = self._strip_suffixes(all_tokens)
         # ``core`` additionally drops stopwords, which is what name matching
         # compares; ``normalized`` keeps them so the index stays predictable.
@@ -291,3 +309,46 @@ class NameNormalizer:
 
 
 name_normalizer = NameNormalizer()
+
+
+def _join_initial_runs(tokens: list[str]) -> list[str]:
+    """Rejoin single letters that punctuation-stripping pulled apart.
+
+    ``CSCBANK S.A.L.`` and ``CSCBANK SAL`` are one bank written two ways, but
+    squashing turns the first into ``cscbank s a l`` and the second into
+    ``cscbank sal``, and nothing downstream can see they match. In a real list
+    that cost us a real merge: the two spellings became two institutions
+    holding 210 and 9 BINs.
+
+    Only a run of **two or more** consecutive single letters is joined, which
+    is what a dotted abbreviation always produces. One lone letter is left
+    alone, so an article in ``bank of a nation`` is not welded to its
+    neighbour.
+    """
+    joined: list[str] = []
+    run: list[str] = []
+    for token in tokens:
+        if len(token) == 1 and token.isalpha():
+            run.append(token)
+            continue
+        if len(run) >= 2:
+            joined.append("".join(run))
+        else:
+            joined.extend(run)
+        run = []
+        joined.append(token)
+    if len(run) >= 2:
+        joined.append("".join(run))
+    else:
+        joined.extend(run)
+    return joined
+
+
+@lru_cache(maxsize=100_000)
+def _normalize_cached(raw: str) -> NormalizedName:
+    """The memoized body of :meth:`NameNormalizer.normalize`.
+
+    Bounded rather than unbounded: an import of unique names must not be able
+    to grow this without limit.
+    """
+    return name_normalizer._normalize_uncached(raw)

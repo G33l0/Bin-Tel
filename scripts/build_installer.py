@@ -109,10 +109,23 @@ def build_windows_installer() -> Path:
 
     INSTALLER_DIR.mkdir(parents=True, exist_ok=True)
     print("[2/2] Compiling the Windows installer (Inno Setup)")
-    result = subprocess.run([compiler, str(script)], cwd=str(ROOT), check=False)
+    # The version is passed in rather than duplicated in the script, so the
+    # file Inno writes and the file this function claims to have produced can
+    # never be two different names.
+    result = subprocess.run(
+        [compiler, f"/DAppVersion={APP_VERSION}", str(script)],
+        cwd=str(ROOT),
+        check=False,
+    )
     if result.returncode != 0:
         raise BuildFailed("Inno Setup reported an error; see the output above.")
-    return INSTALLER_DIR / f"Bin-Tel-Setup-{APP_VERSION}.exe"
+    artefact = INSTALLER_DIR / f"Bin-Tel-Setup-{APP_VERSION}.exe"
+    if not artefact.exists():
+        raise BuildFailed(
+            f"Inno Setup finished but {artefact.name} is not there. "
+            "Check OutputBaseFilename in packaging/windows/bintel.iss."
+        )
+    return artefact
 
 
 # ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.models.entities import CardType, FundingType, RecordStatus
-from app.normalizers.text import squash
+from app.normalizers.text import sanitise_text, squash
 
 _CARD_TYPE_ALIASES: dict[str, CardType] = {
     "credit": CardType.CREDIT, "credit card": CardType.CREDIT, "cr": CardType.CREDIT,
@@ -127,6 +127,24 @@ class CardNormalizer:
         if key and any(hint in key for hint in _COMMERCIAL_HINTS):
             return True
         return None
+
+    def card_level(self, value: str | None) -> str | None:
+        """Tidy a product tier without translating it.
+
+        Sources write ``GOLD``, ``PREPAID CLASSIC``, ``PROPRIETARY ATM``. The
+        words are the source's and they stay the source's — only the spacing
+        and the shouting are normalized, so nothing is claimed that the row did
+        not say. Mapping "World" onto "Platinum" because they sound alike is
+        exactly the kind of tidying that invents facts.
+        """
+        text = sanitise_text(value, limit=48)
+        if not text:
+            return None
+        words = [
+            word if word.isupper() and len(word) <= 3 else word.capitalize()
+            for word in text.split(" ")
+        ]
+        return " ".join(words)[:48]
 
     def currency(self, value: str | None) -> str | None:
         """ISO 4217 alpha-3, upper-cased; anything else becomes ``None``."""

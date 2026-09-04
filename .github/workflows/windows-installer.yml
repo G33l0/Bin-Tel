@@ -1,0 +1,125 @@
+# Build the Windows installer on a Windows machine, because PyInstaller does
+# not cross-compile and Inno Setup does not run anywhere else.
+#
+# Two ways in. The Actions tab (workflow_dispatch) is the one to reach for, but
+# GitHub only offers it once this file is on the default branch, so until then
+# it is invisible — which is why the second exists: a push to a working branch.
+#
+# The paths filter covers the application and the tests, not only packaging.
+# The first version did not, and it was wrong for the reason this workflow
+# exists: the job runs the suite on Windows, which is the only place platform
+# bugs in application code show up. A fix for one of those then did not
+# re-trigger the run that had just caught it. Documentation and data changes
+# still cost nothing.
+#
+# Superseded runs are cancelled, so a busy branch does not queue a pile of
+# Windows jobs to no purpose.
+#
+# There is no tag trigger. YAML allows one `push` key, so adding `tags` beside
+# `branches` here would put a paths filter on tag builds too and quietly skip
+# them. Release-on-tag belongs in its own workflow once this one is on the
+# default branch and proven.
+name: Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["claude/**"]
+    paths:
+      - ".github/workflows/windows-installer.yml"
+      - "app/**"
+      - "tests/**"
+      - "scripts/**"
+      - "packaging/**"
+      - "requirements*.txt"
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The repository carries a 26 MB dataset that the installer ships.
+          # A shallow clone is fine; LFS is not in use.
+          lfs: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # Cheap insurance: a build that ships a broken application is worse than
+      # one that fails. This is also the first time the suite runs on Windows,
+      # where path handling and the Qt platform plugin differ from Linux.
+      - name: Run the tests
+        run: python -m pytest -q
+
+      - name: Build the installer
+        run: python scripts/build_installer.py
+
+      # Prove the frozen application actually starts before publishing it. A
+      # bundle that imports cleanly on the build machine can still miss a
+      # hidden import, and --version is the cheapest thing that would catch it.
+      #
+      # Start-Process rather than calling it directly: this is a GUI-subsystem
+      # executable, built --windowed, so Windows detaches it from the console
+      # and the shell does not wait. Run plainly, $LASTEXITCODE describes
+      # whatever ran before it — the first attempt here failed while the
+      # application printed its version *after* the error, having started
+      # perfectly well. -Wait -PassThru is what actually waits and reports.
+      - name: Check the frozen application runs
+        shell: pwsh
+        run: |
+          $out = New-TemporaryFile
+          $err = New-TemporaryFile
+          $app = Start-Process -FilePath ".\dist\Bin-Tel\Bin-Tel.exe" `
+            -ArgumentList "--version" -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $out -RedirectStandardError $err
+          $printed = (Get-Content $out -Raw), (Get-Content $err -Raw) -join ""
+          Write-Host "exit code : $($app.ExitCode)"
+          Write-Host "output    : $printed"
+          if ($app.ExitCode -ne 0) {
+            throw "The frozen application exited $($app.ExitCode)"
+          }
+          # A zero exit from something that printed nothing is not a start.
+          if ($printed -notmatch "Bin-Tel") {
+            throw "The frozen application started but did not report its version"
+          }
+
+      - name: Confirm the dataset and its licence shipped
+        shell: pwsh
+        run: |
+          $data = "dist\Bin-Tel\_internal\data\bin-lists"
+          # CC BY 4.0 permits redistribution provided the attribution travels
+          # with the data. An installer is redistribution, so a build missing
+          # either file must not be published.
+          foreach ($name in @("binlist-data.csv", "binlist-data.LICENSE.txt", "ATTRIBUTION.md")) {
+            if (-not (Test-Path (Join-Path $data $name))) {
+              throw "$name is missing from the bundle"
+            }
+          }
+          Get-ChildItem $data | Select-Object Name, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bin-Tel-Setup-Windows
+          path: dist/installer/*.exe
+          if-no-files-found: error
+          retention-days: 30

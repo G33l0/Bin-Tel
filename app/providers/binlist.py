@@ -78,6 +78,14 @@ class LicenseStatus(StrEnum):
 #: established and the status says so rather than assuming permission.
 PROVIDER_LICENSE = LicenseStatus.REVIEW_REQUIRED
 
+#: The name this provider is authorized under. A source is consulted only when
+#: this exact code appears in the user's authorized list, so the code is part
+#: of the provider's contract rather than something a caller invents.
+SOURCE_CODE = "binlist.net"
+
+#: Where the provider is, recorded on every fact it produces.
+SOURCE_REFERENCE = "https://binlist.net/"
+
 
 class RateLimited(NetworkError):
     """The local allowance is spent, or the service returned 429."""
@@ -280,6 +288,12 @@ class BinlistProvider:
 
     name = "binlist.net"
     license_status = PROVIDER_LICENSE
+    #: What the learning service authorizes and records against. Its licence
+    #: is REVIEW_REQUIRED, so a fact from here can never apply automatically —
+    #: the auto-apply shortcut is limited to sources whose terms are settled.
+    SOURCE_CODE = SOURCE_CODE
+    licence = str(PROVIDER_LICENSE)
+    reference = SOURCE_REFERENCE
 
     def __init__(
         self,

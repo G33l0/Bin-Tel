@@ -36,6 +36,20 @@ python scripts\build_installer.py
 
 You get `dist\installer\Bin-Tel-Setup-1.0.0.exe`.
 
+The version is passed to Inno by the build script, which reads it from
+`app/core/constants.py`. Do not mirror a bump into `bintel.iss`: the `#define`
+there is only the fallback for compiling the script by hand.
+
+### Without a Windows machine
+
+`.github/workflows/windows-installer.yml` builds it on a `windows-latest`
+runner. Two ways in: the Actions tab → **Windows installer** → Run workflow,
+which GitHub only offers once the file is on the default branch; and a push to
+a `claude/**` branch that touches packaging, which is how it gets tested before
+it is merged. It runs the tests, builds, checks the frozen `.exe` starts, verifies the
+dataset and its licence are in the bundle, and uploads the installer as an
+artifact. That run is also the only place the suite executes on Windows.
+
 The installer is **per-user by default**: it installs into Local AppData,
 raises no UAC prompt and needs no administrator. Someone who wants it
 machine-wide can run it as an administrator and Inno offers the choice.
@@ -127,9 +141,23 @@ sudo apt install libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
 **Ships:** the application, Qt, branding, icons, theme tokens, and an empty
 **BIN list template**.
 
-**Does not ship:** any database, and any BIN data. Bin-Tel builds its database
-from the list you maintain, so a fresh install starts empty and the first run
-walks you through filling it.
+**Also ships:** the 343,063-row `binlist-data.csv`, **with its CC BY 4.0
+licence and attribution**, so an install arrives able to answer something
+instead of with an empty database. About 3 MB on the archive.
+
+Removing either the licence or the attribution from `DATA_FILES` breaks the
+terms the file is carried under — CC BY permits redistribution *provided the
+attribution travels with it*, and an installer is redistribution.
+
+**Does not ship:** any built database, and the sample lists beside the dataset
+— those are placeholders for the maintainer's own research and have no
+business in someone else's install.
+
+Shipping data takes two halves, and doing one alone ships a file that is never
+read. `DATA_FILES` puts it in the bundle; `seed_datasets` copies it out to the
+user's data folder on first run. The bundle is read-only, and when frozen it
+may be a temporary directory that disappears on exit, so `list_sources`
+deliberately looks beside the *user's* list and nowhere else.
 
 The template matters more than it looks. A packaged application unpacks its
 data files into a temporary directory that is deleted on exit, so the shipped
@@ -188,5 +216,8 @@ experience rather than your own existing setup:
 BINTEL_DATA_DIR=/tmp/bintel-check ./dist/Bin-Tel/Bin-Tel
 ```
 
-You should get the welcome screen, and `/tmp/bintel-check/bin-list.csv` should
-exist and be writable afterwards.
+You should get the welcome screen, and afterwards `/tmp/bintel-check/` should
+hold a writable `bin-list.csv` **and** a `bin-lists/` folder with the dataset,
+its licence and its attribution in it. The welcome screen should report about
+343,000 rows and say roughly how long building them takes — a build that size
+runs for minutes, and a window that says nothing about it looks hung.
