@@ -3,9 +3,17 @@
 #
 # Two ways in. The Actions tab (workflow_dispatch) is the one to reach for, but
 # GitHub only offers it once this file is on the default branch, so until then
-# it is invisible — which is why the second exists: a push to a working branch
-# builds when something affecting packaging changed. The paths filter keeps a
-# 45-minute Windows job off every unrelated commit.
+# it is invisible — which is why the second exists: a push to a working branch.
+#
+# The paths filter covers the application and the tests, not only packaging.
+# The first version did not, and it was wrong for the reason this workflow
+# exists: the job runs the suite on Windows, which is the only place platform
+# bugs in application code show up. A fix for one of those then did not
+# re-trigger the run that had just caught it. Documentation and data changes
+# still cost nothing.
+#
+# Superseded runs are cancelled, so a busy branch does not queue a pile of
+# Windows jobs to no purpose.
 #
 # There is no tag trigger. YAML allows one `push` key, so adding `tags` beside
 # `branches` here would put a paths filter on tag builds too and quietly skip
@@ -19,10 +27,15 @@ on:
     branches: ["claude/**"]
     paths:
       - ".github/workflows/windows-installer.yml"
+      - "app/**"
+      - "tests/**"
       - "scripts/**"
       - "packaging/**"
       - "requirements*.txt"
-      - "app/core/constants.py"
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
