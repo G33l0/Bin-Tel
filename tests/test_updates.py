@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -221,3 +222,62 @@ def test_check_reports_up_to_date_when_the_versions_match(update_context):
     manifest, _ = context.providers.fetch_manifest()
     check = context.updates.check(current_version=manifest.version)
     assert not check.update_available
+
+
+# ---------------------------------------------------------------------------
+# file:// URLs, on every platform
+# ---------------------------------------------------------------------------
+
+
+def test_a_windows_file_url_becomes_a_usable_windows_path():
+    """`file:///C:/x` parses to `/C:/x` — a slash in front of the drive letter.
+
+    Treated as a path that looks for \\C:\\x on the current drive, which is
+    nowhere, and it made every URL-configured update source unreachable on
+    Windows. The stdlib converter is exercised directly so the behaviour is
+    pinned from any platform rather than only where the bug appears.
+    """
+    import nturl2path
+    from urllib.parse import urlparse
+
+    parsed = urlparse("file:///C:/data/served/database-manifest.json")
+    assert nturl2path.url2pathname(parsed.path) == (
+        r"C:\data\served\database-manifest.json"
+    )
+
+
+def test_a_posix_file_url_is_unchanged(tmp_path):
+    from app.providers.local_provider import path_from_url
+
+    target = tmp_path / "served" / "database-manifest.json"
+    assert path_from_url(f"file://{target}") == target
+    assert path_from_url(str(target)) == target
+
+
+def test_a_file_url_with_an_escaped_space_is_decoded(tmp_path):
+    from app.providers.local_provider import path_from_url
+
+    assert path_from_url("file:///tmp/with%20space/m.json") == Path(
+        "/tmp/with space/m.json"
+    )
+
+
+def test_a_host_in_a_file_url_is_kept_as_a_share():
+    """`file://server/share/m.json` is a UNC path, not a path missing a root.
+
+    A mirrored package on a shared drive is a case this provider exists for, so
+    the host is reassembled rather than quietly dropped.
+    """
+    from app.providers.local_provider import path_from_url
+
+    assert str(path_from_url("file://server/share/m.json")).replace("\\", "/") == (
+        "//server/share/m.json"
+    )
+
+
+def test_localhost_names_this_machine_rather_than_a_share():
+    from app.providers.local_provider import path_from_url
+
+    assert str(path_from_url("file://localhost/tmp/m.json")).replace("\\", "/") == (
+        "/tmp/m.json"
+    )
