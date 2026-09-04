@@ -246,12 +246,28 @@ def test_a_windows_file_url_becomes_a_usable_windows_path():
     )
 
 
-def test_a_posix_file_url_is_unchanged(tmp_path):
+def test_a_well_formed_file_url_round_trips_on_any_platform(tmp_path):
+    """`Path.as_uri()` is the correct form, and the only one worth asserting.
+
+    An earlier version of this test built the URL as `"file://" + path`, which
+    is right on POSIX and malformed on Windows: two slashes where a drive needs
+    three, so `C:` and everything after it is read as the host. The test failed
+    on Windows for its own reasons, not the code's.
+    """
     from app.providers.local_provider import path_from_url
 
     target = tmp_path / "served" / "database-manifest.json"
-    assert path_from_url(f"file://{target}") == target
+    assert path_from_url(target.as_uri()) == target
     assert path_from_url(str(target)) == target
+
+
+def test_a_drive_letter_is_never_mistaken_for_a_host():
+    """`file://C:\\data\\m.json` is malformed, and commonly written anyway."""
+    from app.providers.local_provider import path_from_url
+
+    resolved = str(path_from_url("file://C:/data/m.json")).replace("\\", "/")
+    assert resolved in ("C:/data/m.json", "/data/m.json")
+    assert not resolved.startswith("//")
 
 
 def test_a_file_url_with_an_escaped_space_is_decoded(tmp_path):

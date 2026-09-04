@@ -7,6 +7,7 @@ the test-suite work without a network.
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from urllib.parse import unquote, urlparse
@@ -27,6 +28,9 @@ logger = get_logger(__name__)
 
 _COPY_CHUNK = 1 << 20  # 1 MiB
 
+#: A Windows drive specification: ``C:`` or the legacy URL form ``C|``.
+_DRIVE = re.compile(r"^[A-Za-z][:|]")
+
 
 def path_from_url(value: str) -> Path:
     r"""Accept a plain path or a ``file://`` URL.
@@ -46,8 +50,15 @@ def path_from_url(value: str) -> Path:
     """
     if value.startswith("file://"):
         parsed = urlparse(value)
-        path = url2pathname(parsed.path)
         host = unquote(parsed.netloc)
+        # `file://C:\data\m.json` has two slashes where a Windows path needs
+        # three, so urlparse reads the drive — and everything after it — as the
+        # host. It is a malformed URL and a very common way to write one, and
+        # reading C: as a machine on the network helps nobody. A host that
+        # starts with a drive letter is a path.
+        if _DRIVE.match(host):
+            return Path(url2pathname(f"{host}{parsed.path}"))
+        path = url2pathname(parsed.path)
         if host and host.lower() != "localhost":
             return Path(f"//{host}{path}")
         return Path(path)
