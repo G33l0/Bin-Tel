@@ -61,6 +61,20 @@ read of this one, and should replace it. For `binlist-data.csv` that is not
 possible: the repository is archived, so the published file is as good as it
 gets, and 7 affected rows in 343,063 is the scale of it.
 
+## What the columns mean
+
+`Emetteur` in sample-b is **the issuer**, confirmed by the list's maintainer.
+It is left mapped that way. Where it disagrees with `binlist-data.csv` about
+who issues a BIN — 17 of the 19 they share — that is a genuine disagreement
+between two sources, not a difference of meaning, and it is recorded as a
+conflict rather than reconciled by remapping a column.
+
+Which of the two is right is not something the files can settle. The trust
+levels decide which is *presented* (`binlist-data.csv` is set to 0.5 in its
+sidecar, a curated list defaults to 0.9), both are always shown, and
+`python -m app.cli learn --local-only` turns each disagreement into a proposal
+you can decide one at a time.
+
 ## Two things the data says that are worth knowing
 
 **`Pays` in sample-b is the country the card WORKS IN.** Not where it was

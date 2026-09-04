@@ -2,6 +2,11 @@
 # where it was issued and not a property of the BIN. Read as an issuing
 # country it attributes Russian-issued BINs to Afghanistan.
 # bintel: Pays = accepted_in
+#
+# Emetteur IS the issuer — confirmed by the list's maintainer. Where it
+# disagrees with a public dataset about who issues a BIN, that is a real
+# disagreement between two sources and not a difference of meaning, so it
+# is recorded as a conflict rather than reconciled by remapping.
 BIN	Pays	Emetteur	Marque	Type	Niveau
 463769	AFGHANISTAN	AFGHAN UNITED BANK	VISA	DEBIT	GOLD
 466523	AFGHANISTAN	AFGHAN UNITED BANK	VISA	DEBIT	PREPAID GOLD
