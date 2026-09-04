@@ -36,6 +36,18 @@ python scripts\build_installer.py
 
 You get `dist\installer\Bin-Tel-Setup-1.0.0.exe`.
 
+The version is passed to Inno by the build script, which reads it from
+`app/core/constants.py`. Do not mirror a bump into `bintel.iss`: the `#define`
+there is only the fallback for compiling the script by hand.
+
+### Without a Windows machine
+
+`.github/workflows/windows-installer.yml` builds it on a `windows-latest`
+runner — Actions tab → **Windows installer** → Run workflow, or push a `v*`
+tag. It runs the tests, builds, checks the frozen `.exe` starts, verifies the
+dataset and its licence are in the bundle, and uploads the installer as an
+artifact. That run is also the only place the suite executes on Windows.
+
 The installer is **per-user by default**: it installs into Local AppData,
 raises no UAC prompt and needs no administrator. Someone who wants it
 machine-wide can run it as an administrator and Inno offers the choice.

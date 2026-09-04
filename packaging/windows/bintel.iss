@@ -24,7 +24,16 @@
 ;    months curating is indefensible. The last page offers to remove it.
 
 #define AppName        "Bin-Tel"
-#define AppVersion     "1.0.0"
+
+; The version comes from the build script, which reads it from
+; app/core/constants.py — one source of truth. Compiling this file by hand
+; still works; it just falls back to the value below, which is why a bump in
+; constants.py must not be mirrored here. When the two drifted, Inno wrote
+; Bin-Tel-Setup-1.0.0.exe while the build script announced a path with the new
+; version in it and no file at the end of it.
+#ifndef AppVersion
+  #define AppVersion   "1.0.0"
+#endif
 #define AppPublisher   "Bin-Tel Project"
 #define AppURL         "https://bintel.org"
 #define AppExeName     "Bin-Tel.exe"
