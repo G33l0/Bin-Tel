@@ -325,3 +325,54 @@ def test_learning_is_off_and_authorizes_nothing_until_it_is_turned_on(qtbot, con
     page.learning_binlist.setChecked(True)
     auth = Authorization.from_settings(context.config.settings)
     assert auth.is_authorized("binlist.net")
+
+
+def test_shutdown_waits_for_background_work(qtbot, context):
+    """Quitting mid-task used to abort the process, not close the window.
+
+    Qt destroys its objects on the way out while pool threads may still be
+    finishing; emitting into a destroyed WorkerSignals raises on a thread with
+    nowhere to hand the exception, and Qt turns that into an abort.
+    """
+    import threading
+
+    from app.workers.base import _IN_FLIGHT, Worker, run_in_background
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow() -> str:
+        started.set()
+        release.wait(timeout=5)
+        return "done"
+
+    worker = Worker(slow)
+    run_in_background(worker)
+    assert started.wait(timeout=5)
+    assert worker in _IN_FLIGHT
+
+    release.set()
+    context.shutdown()
+    # The pool drained and the register is empty, so nothing can emit into an
+    # object the teardown is about to destroy.
+    assert not _IN_FLIGHT
+
+
+def test_a_worker_whose_receiver_is_gone_does_not_take_the_process_with_it(qtbot):
+    """The belt to the shutdown drain's braces."""
+    from app.workers.base import Worker
+
+    worker = Worker(lambda: "value")
+    worker.signals.deleteLater()
+    worker.signals = None  # type: ignore[assignment]
+
+    class Destroyed:
+        def emit(self, *args):
+            raise RuntimeError("wrapped C/C++ object of type WorkerSignals has been deleted")
+
+    class Signals:
+        def __getattr__(self, name):
+            return Destroyed()
+
+    worker.signals = Signals()  # type: ignore[assignment]
+    worker.run()  # must return rather than raise out of the pool thread

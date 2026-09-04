@@ -234,6 +234,13 @@ class AppContext:
             logger.debug("Workspace housekeeping did not complete", exc_info=True)
 
     def shutdown(self, *, session_seconds: float | None = None) -> None:
+        # Background work first, and before anything it reports to is closed.
+        # A worker still running when Qt destroys its signal objects ends the
+        # process with an abort instead of a quit, and one still holding a
+        # database session would be reading a connection we are about to shut.
+        from app.workers.base import shutdown_workers
+
+        shutdown_workers()
         try:
             self.config.save()
         except Exception:

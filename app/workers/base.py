@@ -79,22 +79,40 @@ class Worker(QRunnable, Generic[T]):
     def cancel(self) -> None:
         self.token.cancel()
 
+    def _emit(self, signal: Any, *args: Any) -> None:
+        """Emit unless the receiving object is already gone.
+
+        On the way out Qt destroys its objects while pool threads may still be
+        finishing. Emitting into a destroyed ``WorkerSignals`` raises from a
+        thread with nowhere to hand the exception, and Qt turns that into an
+        abort — the application dies on quit instead of closing. The work is
+        over by then and nobody is listening, so dropping the signal is the
+        whole of the harm.
+
+        ``shutdown_workers`` makes this rare by draining the pool first; this
+        makes it harmless when the race is lost anyway.
+        """
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            logger.debug("Dropped a signal from a worker whose receiver is gone")
+
     def run(self) -> None:
-        self.signals.started.emit()
+        self._emit(self.signals.started)
         try:
             if self.token.cancelled:
                 raise OperationCancelled("The operation was cancelled before it started.")
             value = self._function(*self._args, **self._kwargs)
         except OperationCancelled:
-            self.signals.cancelled.emit()
+            self._emit(self.signals.cancelled)
         except Exception as exc:
             logger.exception("Background task failed: %s", type(exc).__name__)
-            self.signals.failed.emit(exc)
-            self.signals.error_text.emit(friendly_message(exc))
+            self._emit(self.signals.failed, exc)
+            self._emit(self.signals.error_text, friendly_message(exc))
         else:
-            self.signals.result.emit(value)
+            self._emit(self.signals.result, value)
         finally:
-            self.signals.finished.emit()
+            self._emit(self.signals.finished)
 
 
 #: Workers currently on the pool.
@@ -118,6 +136,29 @@ def run_in_background(
     _IN_FLIGHT.add(worker)
     worker.signals.finished.connect(lambda: _IN_FLIGHT.discard(worker))
     (pool or QThreadPool.globalInstance()).start(worker)
+    return worker
+
+
+def shutdown_workers(timeout_ms: int = 5_000, pool: QThreadPool | None = None) -> bool:
+    """Cancel what is still running and wait for the pool to drain.
+
+    Called before the application tears its objects down. Without it a worker
+    can still be running when Qt destroys the objects it reports to, which ends
+    the process with an abort rather than a clean quit.
+
+    Cancellation is cooperative — a task that never polls its token is waited
+    for, not killed — so this returns whether the pool actually drained inside
+    *timeout_ms*, and the caller can decide whether to care.
+    """
+    for worker in list(_IN_FLIGHT):
+        worker.cancel()
+    drained = (pool or QThreadPool.globalInstance()).waitForDone(timeout_ms)
+    if not drained:
+        logger.warning(
+            "Background work did not finish within %d ms of shutdown", timeout_ms
+        )
+    _IN_FLIGHT.clear()
+    return drained
     return worker
 
 
