@@ -127,9 +127,19 @@ sudo apt install libgl1 libegl1 libxkbcommon-x11-0 libxcb-cursor0
 **Ships:** the application, Qt, branding, icons, theme tokens, and an empty
 **BIN list template**.
 
-**Does not ship:** any database, and any BIN data. Bin-Tel builds its database
-from the list you maintain, so a fresh install starts empty and the first run
-walks you through filling it.
+**Does not ship:** any database, and any BIN data — including the 343,063-row
+`data/bin-lists/binlist-data.csv` that lives in this repository. That file is
+here so the project can be built and tested against real data; it is not part
+of the installer. Bin-Tel builds its database from the list *you* maintain, so
+a fresh install starts empty and the first run walks you through filling it.
+
+If you want an install to arrive with data in it, that is a deliberate change
+rather than a setting: add the dataset to `DATA_FILES` in
+`scripts/build_common.py` **with its licence and attribution files**, and
+extend `app.services.bin_list.seed_bin_list` to copy the `bin-lists` folder out
+of the bundle the way it already copies the template. Both halves are needed —
+the bundle is read-only and `list_sources` looks beside the user's own list,
+not inside the application. Budget about 3 MB on the archive.
 
 The template matters more than it looks. A packaged application unpacks its
 data files into a temporary directory that is deleted on exit, so the shipped
