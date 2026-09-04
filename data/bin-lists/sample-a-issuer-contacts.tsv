@@ -1,3 +1,7 @@
+# This export lost the leading zeros from its BIN column: 2102 is 002102,
+# 10051 is 010051. Declared here so the file reads correctly wherever it
+# is rebuilt, without padding the clean lists beside it.
+# bintel: pad_short_bins = true
 BIN	Brand	Type	Category	Issuer	IssuerPhone	IssuerUrl	isoCode2	isoCode3	CountryName
 2102	PRIVATE LABEL	CREDIT	STANDARD	CHINA MERCHANTS BANK	95555	https://english.cmbchina.com	CN	CHN	CHINA
 2195	PRIVATE LABEL	DEBIT		CHINA MERCHANTS BANK	95555	https://english.cmbchina.com	CN	CHN	CHINA

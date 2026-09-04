@@ -255,7 +255,7 @@ COLUMN_ALIASES: dict[str, str] = {
 _DIRECTIVE = re.compile(r"^#\s*bintel\s*:\s*(?P<source>[^=]+?)\s*=\s*(?P<target>\S+)\s*$", re.I)
 
 #: Directive names that configure the *file* rather than rename a column.
-RESERVED_DIRECTIVES: frozenset[str] = frozenset({"confidence"})
+RESERVED_DIRECTIVES: frozenset[str] = frozenset({"confidence", "pad_short_bins"})
 
 #: How much a list is trusted when it does not say.
 #:
@@ -641,6 +641,33 @@ def read_sidecar(path: Path, *, encoding: str = "utf-8") -> dict[str, str]:
     return directives
 
 
+#: Directive values read as "yes".
+_TRUE_DIRECTIVE = frozenset({"true", "yes", "on", "1"})
+_FALSE_DIRECTIVE = frozenset({"false", "no", "off", "0"})
+
+
+def file_pads_short_bins(directives: dict[str, str], source: Path) -> bool | None:
+    """Whether this file says its leading zeros were stripped.
+
+    Which files were damaged is a property of the files, not of the machine
+    rebuilding them: a dataset whose BIN column went through a spreadsheet is
+    still damaged on someone else's laptop. Declaring it beside the file means
+    the knowledge travels with it, and means a clean file in the same folder is
+    not padded just because a damaged one shares it.
+    """
+    declared = directives.get("pad_short_bins")
+    if declared is None:
+        return None
+    if declared in _TRUE_DIRECTIVE:
+        return True
+    if declared in _FALSE_DIRECTIVE:
+        return False
+    raise ImportError_(
+        f"{source.name} declares pad_short_bins as something other than yes or no.",
+        detail=f"`# bintel: pad_short_bins = {declared}` — expected true or false.",
+    )
+
+
 def file_confidence(directives: dict[str, str], source: Path) -> float:
     """How far this file says it should be trusted."""
     declared = directives.get("confidence")
@@ -875,6 +902,8 @@ def _read_one(
     # The sidecar first, so a line inside the file can still override it.
     directives: dict[str, str] = read_sidecar(path, encoding=encoding)
     confidence = file_confidence(directives, path)
+    declared_pad = file_pads_short_bins(directives, path)
+    pad_here = pad_short if declared_pad is None else declared_pad
     for line, raw_cells in iter_rows(path, encoding=encoding, directives=directives):
         cells = _resplit(raw_cells)
         if columns is None or starts_a_new_section(cells, columns, directives):
@@ -884,6 +913,8 @@ def _read_one(
             # mistyped header must not be mistaken for a missing one.
             columns = resolve_columns(cells, directives)
             confidence = file_confidence(directives, path)
+            declared_pad = file_pads_short_bins(directives, path)
+            pad_here = pad_short if declared_pad is None else declared_pad
             headers = [(cell or "").strip() for cell in cells]
             found_header = True
             for name in sorted(set(columns.values())):
@@ -898,7 +929,7 @@ def _read_one(
         try:
             record = _row_record(
                 values,
-                pad_short=pad_short,
+                pad_short=pad_here,
                 notes=notes,
                 source_row=_original_row(cells, headers),
                 source_file=label,

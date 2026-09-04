@@ -10,3 +10,10 @@
 # six years stale. Where it disagrees with a list you curate, yours is the
 # answer and this is recorded as the dissent.
 # bintel: confidence = 0.5
+
+# Its BIN column went through a spreadsheet before publication: across all
+# 343,063 rows not one BIN begins with 0 while seven are five digits, and 57
+# phone numbers are rendered in scientific notation. Seven rows are affected.
+# Declared here rather than left to a per-machine setting, because the file is
+# damaged wherever it is read.
+# bintel: pad_short_bins = true

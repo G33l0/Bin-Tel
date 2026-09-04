@@ -625,3 +625,52 @@ def test_an_unusable_confidence_is_refused(tmp_path, declared):
     )
     with pytest.raises(ImportError_):
         read_bin_list(path)
+
+
+def test_a_file_can_declare_that_its_zeros_were_stripped(tmp_path):
+    """Which files are damaged is a property of the files, not of the machine.
+
+    A dataset whose BIN column went through a spreadsheet is still damaged on
+    someone else's laptop, and a clean list beside it must not be padded just
+    because they share a folder.
+    """
+    main = write_named(tmp_path, "bin-list.csv", "bin,bank\n410000,Cascade Bank\n")
+    write_named(
+        tmp_path,
+        "bin-lists/damaged.csv",
+        "# bintel: pad_short_bins = true\nbin,bank\n42410,Meridian Trust\n",
+    )
+    write_named(tmp_path, "bin-lists/clean.csv", "bin,bank\n530001,Harbor Mutual\n")
+
+    # No flag passed anywhere: the damaged file still reads correctly.
+    report = read_bin_list(main)
+    assert report.rejected == 0
+    assert {record.bin for record in report.records} == {
+        "410000",
+        "042410",
+        "530001",
+    }
+    assert report.padded_bins == 1
+
+
+def test_a_file_can_decline_padding_the_caller_asked_for(tmp_path):
+    """A clean file is not damaged by a flag meant for its neighbour."""
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "# bintel: pad_short_bins = false\nbin,bank\n42410,Cascade Bank\n410000,M\n",
+    )
+    report = read_bin_list(path, pad_short_bins=True)
+    assert report.accepted == 1
+    assert report.rejected == 1
+
+
+def test_an_unusable_padding_declaration_is_refused(tmp_path):
+    path = write_named(
+        tmp_path,
+        "bin-list.csv",
+        "# bintel: pad_short_bins = maybe\nbin,bank\n410000,Cascade Bank\n",
+    )
+    with pytest.raises(ImportError_) as excinfo:
+        read_bin_list(path)
+    assert "maybe" in (excinfo.value.detail or "")

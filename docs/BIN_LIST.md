@@ -158,8 +158,19 @@ zeros from a numeric column, so this may be '042410' — rebuild with
 --pad-short-bins if you know that is what happened to this file
 ```
 
-`--pad-short-bins` (**Database → Rebuild**, or the checkbox, which remembers
-your answer) left-pads them back to the length an assignment actually comes in — sixes and eights. Four and five digits become six; seven becomes
+Better than a flag: let the file say so, once, and be read correctly wherever
+it goes. Which files are damaged is a property of the files, not of the machine
+rebuilding them:
+
+```
+# bintel: pad_short_bins = true
+```
+
+A clean list in the same folder is then left alone, which a global flag cannot
+manage. `--pad-short-bins` (**Database → Rebuild**, or the checkbox, which
+remembers your answer) still turns it on for everything at once, and a file
+saying `false` overrides it. Either way it left-pads them back to the length an
+assignment actually comes in — sixes and eights. Four and five digits become six; seven becomes
 eight, because nothing is issued at seven digits, so a surviving seven is an
 eight that lost one zero.
 
