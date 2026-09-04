@@ -77,10 +77,31 @@ jobs:
       # Prove the frozen application actually starts before publishing it. A
       # bundle that imports cleanly on the build machine can still miss a
       # hidden import, and --version is the cheapest thing that would catch it.
+      #
+      # Start-Process rather than calling it directly: this is a GUI-subsystem
+      # executable, built --windowed, so Windows detaches it from the console
+      # and the shell does not wait. Run plainly, $LASTEXITCODE describes
+      # whatever ran before it — the first attempt here failed while the
+      # application printed its version *after* the error, having started
+      # perfectly well. -Wait -PassThru is what actually waits and reports.
       - name: Check the frozen application runs
+        shell: pwsh
         run: |
-          .\dist\Bin-Tel\Bin-Tel.exe --version
-          if ($LASTEXITCODE -ne 0) { throw "The frozen application did not start" }
+          $out = New-TemporaryFile
+          $err = New-TemporaryFile
+          $app = Start-Process -FilePath ".\dist\Bin-Tel\Bin-Tel.exe" `
+            -ArgumentList "--version" -Wait -PassThru -NoNewWindow `
+            -RedirectStandardOutput $out -RedirectStandardError $err
+          $printed = (Get-Content $out -Raw), (Get-Content $err -Raw) -join ""
+          Write-Host "exit code : $($app.ExitCode)"
+          Write-Host "output    : $printed"
+          if ($app.ExitCode -ne 0) {
+            throw "The frozen application exited $($app.ExitCode)"
+          }
+          # A zero exit from something that printed nothing is not a start.
+          if ($printed -notmatch "Bin-Tel") {
+            throw "The frozen application started but did not report its version"
+          }
 
       - name: Confirm the dataset and its licence shipped
         shell: pwsh
