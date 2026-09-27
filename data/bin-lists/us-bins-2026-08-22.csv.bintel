@@ -1,0 +1,19 @@
+# Settings for us-bins-2026-08-22.csv.
+#
+# Trusted ABOVE binlist-data.csv, which sits at 0.5. Where the two name a
+# different bank for the same BIN, this file is the answer and the archive is
+# kept as recorded dissent rather than discarded.
+#
+# That ranking is evidence-based, not a preference. The archive was published
+# in 2020 and has been read-only since; this list is dated 2026-08-22, and the
+# disagreements between them are dominated by renames and mergers the archive
+# predates — WACHOVIA where this says WELLS FARGO, FAA C.U. where this says
+# TRUE SKY C.U., KERN SCHOOLS F.C.U. where this says VALLEY STRONG C.U.
+#
+# To reverse that, put this below 0.5. Nothing else changes and nothing is
+# lost either way: the losing side stays on record and `origin <bin>` shows it.
+#
+# The `notes` column carries the LEVEL and BANK columns exactly as the source
+# printed them, before they were split apart. The reader never ingests it, so
+# it costs nothing and every split stays checkable against what was read.
+# bintel: confidence = 0.9

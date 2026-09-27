@@ -110,7 +110,7 @@ jobs:
           # CC BY 4.0 permits redistribution provided the attribution travels
           # with the data. An installer is redistribution, so a build missing
           # either file must not be published.
-          foreach ($name in @("binlist-data.csv", "binlist-data.LICENSE.txt", "ATTRIBUTION.md")) {
+          foreach ($name in @("binlist-data.csv", "binlist-data.LICENSE.txt", "ATTRIBUTION.md", "us-bins-2026-08-22.csv", "us-bins-2026-08-22.csv.bintel")) {
             if (-not (Test-Path (Join-Path $data $name))) {
               throw "$name is missing from the bundle"
             }
