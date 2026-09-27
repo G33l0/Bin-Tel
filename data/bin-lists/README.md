@@ -83,15 +83,22 @@ Measured against `binlist-data.csv`:
 | — the same name spelt differently | 58 |
 | — a different name | 1,554 |
 
-**The 2026 file wins a disagreement.** That is the ranking in its sidecar
-(0.9, against the archive's 0.5) and it rests on the disagreements themselves:
-they are dominated by renames and mergers the 2020 archive predates —
-`WACHOVIA` → `WELLS FARGO`, `FIA CARD SERVICES, N.A.` → `BANK OF AMERICA,
-NATIONAL ASSOCIATION`, `HSBC BANK NEVADA, N.A.` → `CAPITAL ONE`, `RBS
-CITIZENS, N.A.` → `CITIZENS BANK, N.A.`, `FAA C.U.` → `TRUE SKY C.U.`
+**`binlist-data.csv` wins a disagreement.** It is the reference, and the
+2026 file is set aside wherever the two name a different bank for the same
+BIN. That is the ranking in the sidecars — 0.4 here against the reference's
+0.5 — and it is the list owner's call, not something the files settle between
+them. Worth knowing when weighing it: the disagreements are dominated by
+renames and mergers the 2020 archive predates — `WACHOVIA` → `WELLS FARGO`,
+`FIA CARD SERVICES, N.A.` → `BANK OF AMERICA, NATIONAL ASSOCIATION`, `HSBC
+BANK NEVADA, N.A.` → `CAPITAL ONE`, `RBS CITIZENS, N.A.` → `CITIZENS BANK,
+N.A.`, `FAA C.U.` → `TRUE SKY C.U.`
 
-To reverse it, set that one number below 0.5. **Neither reading loses
-anything**: the archive keeps its own row either way, both are shown, and
+**A blank is not a clash.** The 352 banks, 739 card levels and 53 card types
+the reference leaves empty are still filled in from the 2026 file, and its 9
+BINs the reference does not hold still come in.
+
+To reverse the ranking, set that one number above 0.5. **Neither setting loses
+anything**: both files keep their own rows, both are shown, and
 `python -m app.cli origin <bin>` prints each source row as it arrived.
 
 `binlist-data.csv` itself is **not** edited. It is redistributed under CC BY

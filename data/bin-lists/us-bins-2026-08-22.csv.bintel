@@ -1,19 +1,19 @@
 # Settings for us-bins-2026-08-22.csv.
 #
-# Trusted ABOVE binlist-data.csv, which sits at 0.5. Where the two name a
-# different bank for the same BIN, this file is the answer and the archive is
-# kept as recorded dissent rather than discarded.
+# Trusted BELOW binlist-data.csv, which sits at 0.5. binlist-data.csv is the
+# reference: where the two name a different bank for the same BIN, the
+# reference is what the tool answers with and this file is set aside.
 #
-# That ranking is evidence-based, not a preference. The archive was published
-# in 2020 and has been read-only since; this list is dated 2026-08-22, and the
-# disagreements between them are dominated by renames and mergers the archive
-# predates — WACHOVIA where this says WELLS FARGO, FAA C.U. where this says
-# TRUE SKY C.U., KERN SCHOOLS F.C.U. where this says VALLEY STRONG C.U.
+# That is the list owner's call, not something the files settle between them.
+# Both readings stay on record either way — the losing one is kept as recorded
+# dissent, and `python -m app.cli origin <bin>` prints each source row as it
+# arrived. To reverse it, put this above 0.5.
 #
-# To reverse that, put this below 0.5. Nothing else changes and nothing is
-# lost either way: the losing side stays on record and `origin <bin>` shows it.
+# A blank is not a clash. Where the reference says nothing about a BIN's bank,
+# card level or card type, this file still fills it in, and the 9 BINs the
+# reference does not hold at all still come in from here.
 #
 # The `notes` column carries the LEVEL and BANK columns exactly as the source
 # printed them, before they were split apart. The reader never ingests it, so
 # it costs nothing and every split stays checkable against what was read.
-# bintel: confidence = 0.9
+# bintel: confidence = 0.4
