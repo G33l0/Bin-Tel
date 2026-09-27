@@ -51,6 +51,12 @@ DATA_FILES: tuple[tuple[str, str], ...] = (
     ("data/bin-lists/binlist-data.csv.bintel", "data/bin-lists"),
     ("data/bin-lists/binlist-data.LICENSE.txt", "data/bin-lists"),
     ("data/bin-lists/ATTRIBUTION.md", "data/bin-lists"),
+    # The 2026 US list, which corrects the archive where the two disagree. It
+    # ships with the archive rather than instead of it: the ranking in the
+    # sidecars is what settles a contradiction, and both readings stay on
+    # record either way.
+    ("data/bin-lists/us-bins-2026-08-22.csv", "data/bin-lists"),
+    ("data/bin-lists/us-bins-2026-08-22.csv.bintel", "data/bin-lists"),
 )
 
 #: Modules PyInstaller's static analysis cannot see (loaded via SQLAlchemy's

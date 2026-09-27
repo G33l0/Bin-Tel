@@ -18,6 +18,7 @@ Adding a dataset is dropping a file in. Removing one is deleting the file.
 | File | Rows | What it is |
 |---|---|---|
 | `binlist-data.csv` | 343,063 | A public dataset, CC BY 4.0 — see `ATTRIBUTION.md` |
+| `us-bins-2026-08-22.csv` | 3,085 | A 2026 US list, trusted above the archive — see below |
 | `sample-a-issuer-contacts.tsv` | 20 | Sample of a personally compiled list |
 | `sample-b-by-country.tsv` | 20 | Sample of the same, French headers |
 
@@ -60,6 +61,73 @@ the BIN column formatted as **Text**, that export is better than the padded
 read of this one, and should replace it. For `binlist-data.csv` that is not
 possible: the repository is archived, so the published file is as good as it
 gets, and 7 affected rows in 343,063 is the scale of it.
+
+---
+
+## The 2026 US list, and how it sits against the archive
+
+`us-bins-2026-08-22.csv` is 3,085 US BINs. It overlaps the archive almost
+completely — 3,076 of its BINs are already there, 9 are not — so it is worth
+having for what it *corrects*, not for what it adds.
+
+Measured against `binlist-data.csv`:
+
+| | |
+|---|---|
+| BINs the archive does not have | 9 |
+| bank filled in where the archive had none | 352 |
+| card level filled in where the archive had none | 739 |
+| card type filled in where the archive had none | 53 |
+| both name a bank | 2,656 |
+| — the same name | 1,044 |
+| — the same name spelt differently | 58 |
+| — a different name | 1,554 |
+
+**`binlist-data.csv` wins a disagreement.** It is the reference, and the
+2026 file is set aside wherever the two name a different bank for the same
+BIN. That is the ranking in the sidecars — 0.4 here against the reference's
+0.5 — and it is the list owner's call, not something the files settle between
+them. Worth knowing when weighing it: the disagreements are dominated by
+renames and mergers the 2020 archive predates — `WACHOVIA` → `WELLS FARGO`,
+`FIA CARD SERVICES, N.A.` → `BANK OF AMERICA, NATIONAL ASSOCIATION`, `HSBC
+BANK NEVADA, N.A.` → `CAPITAL ONE`, `RBS CITIZENS, N.A.` → `CITIZENS BANK,
+N.A.`, `FAA C.U.` → `TRUE SKY C.U.`
+
+**A blank is not a clash.** The 352 banks, 739 card levels and 53 card types
+the reference leaves empty are still filled in from the 2026 file, and its 9
+BINs the reference does not hold still come in.
+
+To reverse the ranking, set that one number above 0.5. **Neither setting loses
+anything**: both files keep their own rows, both are shown, and
+`python -m app.cli origin <bin>` prints each source row as it arrived.
+
+`binlist-data.csv` itself is **not** edited. It is redistributed under CC BY
+4.0 with `ATTRIBUTION.md` recording *Modified — no*, and rewriting it would
+make that untrue. The merge happens in the database, at build time.
+
+### How LEVEL and BANK were separated
+
+The source was a printed table with no delimiter between the level and the
+bank, aligned for the eye: card types are different lengths, so column offsets
+do not survive, and the gap before the bank name is six spaces on one row and
+one space on the next.
+
+Once the BIN and the card type are taken off the front, **2,672 of the 3,085
+rows still have a gap of two or more spaces at that boundary** and say outright
+where the level ends. Those rows are the evidence the rest is derived from:
+they give the closed level vocabulary the column actually uses, and the bank
+names as *this* file spells them, including `AMERICAN EXPRESS US CONSUMER`,
+which the archive does not hold at all. The two vocabularies are then grown
+against each other over the remaining rows until they stop growing.
+
+The outcome: 2,672 rows split by the file's own spacing, 261 by a level from
+that vocabulary, 78 by a bank name alone with no level in front of it, 3 left
+undecided and flagged, and 71 that name no bank in the source at all. Every
+one of the 3,085 rebuilds its source line exactly.
+
+The `notes` column carries the level and bank text as it was printed, before
+the split. The reader never ingests it, so it is free, and it keeps every
+split checkable against what was actually read.
 
 ## What the columns mean
 

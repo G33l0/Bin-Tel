@@ -1,0 +1,19 @@
+# Settings for us-bins-2026-08-22.csv.
+#
+# Trusted BELOW binlist-data.csv, which sits at 0.5. binlist-data.csv is the
+# reference: where the two name a different bank for the same BIN, the
+# reference is what the tool answers with and this file is set aside.
+#
+# That is the list owner's call, not something the files settle between them.
+# Both readings stay on record either way — the losing one is kept as recorded
+# dissent, and `python -m app.cli origin <bin>` prints each source row as it
+# arrived. To reverse it, put this above 0.5.
+#
+# A blank is not a clash. Where the reference says nothing about a BIN's bank,
+# card level or card type, this file still fills it in, and the 9 BINs the
+# reference does not hold at all still come in from here.
+#
+# The `notes` column carries the LEVEL and BANK columns exactly as the source
+# printed them, before they were split apart. The reader never ingests it, so
+# it costs nothing and every split stays checkable against what was read.
+# bintel: confidence = 0.4
